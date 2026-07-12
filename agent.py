@@ -264,7 +264,7 @@ def run_turn(
     passed to the next turn for continuity.
     """
     history = list(conversation_history) if conversation_history else []
-    max_tool_rounds = min(config.get("max_tool_rounds", 15), 30)
+    max_tool_rounds = min(config.get("max_tool_rounds", 15), 100)
 
     # Retrieve relevant context
     skills_hits = skills_lib.relevant(user_input, k=3)
@@ -413,6 +413,7 @@ def main():
     if not args.compact:
         from tui import ElingTUI
         tui = ElingTUI()
+        tui.console.clear()
     else:
         tui = None
 

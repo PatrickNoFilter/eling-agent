@@ -15,6 +15,7 @@ Usage:
     tui.learned_skill("list-files")
 """
 from contextlib import contextmanager
+from pathlib import Path
 import time
 from datetime import datetime
 from typing import Optional
@@ -26,16 +27,43 @@ from rich.text import Text
 from rich.rule import Rule
 from rich import box
 
-# ── Color palette (Hermes-inspired gold/amber/bronze) ────────────────
-ACCENT = "#FFD700"      # gold — headers, highlights
-AMBER = "#FFBF00"       # amber — secondary highlights
-BRONZE = "#CD7F32"      # bronze — tertiary elements
-TEXT = "#FFF8DC"        # light — body text
-DIM = "#B8860B"         # dim — muted text
-GREEN = "#50C878"       # success / completed
-RED = "#FF6B6B"         # error / failed
-CYAN = "#00CED1"        # info / in-progress
-PLAN_BORDER = "#8B8682" # session border grey
+# ── Read version from pyproject.toml ──────────────────────────────────
+
+_ROOT = Path(__file__).resolve().parent
+
+
+def _get_version() -> str:
+    """Read version from .agent-version or pyproject.toml, in that order."""
+    try:
+        # Agent CLI version marker wins if present
+        ver_file = _ROOT / ".agent-version"
+        if ver_file.exists():
+            v = ver_file.read_text().strip()
+            if v:
+                return v
+        # Fall back to pyproject.toml
+        pyproject = _ROOT / "pyproject.toml"
+        if pyproject.exists():
+            for line in pyproject.read_text().splitlines():
+                if line.startswith("version ="):
+                    return line.split("=")[1].strip().strip('"')
+    except Exception:
+        pass
+    return "0.1.0"
+
+
+VERSION = _get_version()
+
+# ── Color palette (steel-blue sequential: eff3ff → 08519c) ───────────
+ACCENT = "#3182bd"      # dark blue — headers, highlights
+AMBER = "#6baed6"        # medium blue — secondary highlights
+BRONZE = "#9ecae1"       # medium-light blue — borders, tertiary
+TEXT = "#eff3ff"         # lightest blue — body text (good contrast on dark bg)
+DIM = "#c6dbef"          # light blue — muted text, timestamps
+GREEN = "#50C878"        # success / completed
+RED = "#FF6B6B"          # error / failed
+CYAN = "#08519c"         # darkest blue — info / in-progress
+PLAN_BORDER = "#6baed6"  # medium blue — session border
 
 # ── Status icons ─────────────────────────────────────────────────────
 ICON_PENDING = "○"
@@ -102,7 +130,7 @@ class ElingTUI:
     ):
         """Print startup banner with logo on top, features below."""
         lines = list(BANNER)  # ELING wordmark
-        lines.append(f"[dim {DIM}]Eling v0.1.0 — Autonomous Agent[/]")
+        lines.append(f"[dim {DIM}]Eling v{VERSION} — Autonomous Agent[/]")
         lines.append("")
 
         stats = []
