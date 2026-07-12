@@ -9,9 +9,10 @@ import concurrent.futures
 import json
 import logging
 import os
+import re
+import subprocess
 import sys
 import time
-
 from memory import MemoryStore
 from skills import SkillLibrary
 from provider import ZenProvider
@@ -72,6 +73,59 @@ def build_system_prompt(
             )
 
     return "\n".join(parts)
+
+
+# ── Auto Ruff —────────────────────────────────────────────────────────
+
+PY_FILE_RE = re.compile(r'(?:^|\s)(/[^\s]*\.py|[a-zA-Z0-9_./-]+\.py)')
+
+
+def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
+    """Scan tool results for .py file references and run ruff check.
+
+    Called after each tool round — catches syntax/quality issues
+    immediately after code is created or edited.
+    """
+    files = set()
+    for tr in tool_results:
+        text = tr.get("content", "")
+        for m in PY_FILE_RE.finditer(text):
+            candidate = m.group(1).rstrip(".,;:!?)'\"")
+            if os.path.isfile(candidate):
+                files.add(candidate)
+
+    if not files:
+        return
+
+    if tui:
+        tui.console.print(
+            f"  [dim {tui.DIM}]⏳ ruff check {' '.join(sorted(files))}[/]"
+        )
+
+    try:
+        result = subprocess.run(
+            ["ruff", "check", *sorted(files), "--output-format=concise"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0:
+            if tui:
+                tui.console.print(f"  [bold green]✓ ruff[/]  [dim {tui.DIM}]clean[/]")
+        else:
+            # Show first few lines of output
+            lines = result.stdout.strip().splitlines()
+            snippet = "\n".join(lines[:5])
+            if len(lines) > 5:
+                snippet += f"\n  [dim {tui.DIM}]... and {len(lines)-5} more[/]"
+            if tui:
+                tui.console.print("  [bold red]✗ ruff[/]")
+                tui.console.print(snippet)
+            else:
+                print(f"ruff: {len(lines)} issue(s)")
+    except FileNotFoundError:
+        pass  # ruff not installed
+    except subprocess.TimeoutExpired:
+        if tui:
+            tui.console.print(f"  [dim {tui.DIM}]⚠ ruff timed out[/]")
 
 
 def run_tool_calls(
@@ -201,9 +255,16 @@ def run_turn(
     mcp_manager: MCPManager,
     config: dict,
     tui=None,
-) -> str:
-    """Process one turn: retrieve context, loop tool rounds, log, learn."""
-    max_tool_rounds = config.get("max_tool_rounds", 6)
+    *,
+    conversation_history: list | None = None,
+) -> tuple[str, list]:
+    """Process one turn: retrieve context, loop tool rounds, log, learn.
+
+    Returns (response_text, conversation_history) so history can be
+    passed to the next turn for continuity.
+    """
+    history = list(conversation_history) if conversation_history else []
+    max_tool_rounds = min(config.get("max_tool_rounds", 15), 30)
 
     # Retrieve relevant context
     skills_hits = skills_lib.relevant(user_input, k=3)
@@ -220,10 +281,11 @@ def run_turn(
 
     system_prompt = build_system_prompt(skills_hits, memory_hits)
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_input},
-    ]
+    # Build messages: system + history (last 10 exchanges) + new user input
+    messages = [{"role": "system", "content": system_prompt}]
+    # Keep last 20 history entries (10 user/assistant pairs) to stay within token limits
+    messages.extend(history[-20:])
+    messages.append({"role": "user", "content": user_input})
 
     all_tool_schemas = list(plugin_schemas)
     all_tool_schemas.extend(mcp_manager.openai_tools())
@@ -233,12 +295,22 @@ def run_turn(
         resp = provider.chat(
             messages,
             tools=all_tool_schemas if all_tool_schemas else None,
-            max_tokens=2000,
+            max_tokens=16384,
             temperature=0.4,
         )
 
         content = resp.get("content") or ""
         tool_calls = resp.get("tool_calls")
+
+        # Show model's chain-of-thought reasoning if present
+        reasoning = resp.get("reasoning_content") or ""
+        if reasoning and tui:
+            tui.reasoning(reasoning)
+
+        # If content is empty but we have reasoning (e.g. max_tokens still too low),
+        # use the reasoning as fallback so the agent can still respond
+        if not content and reasoning:
+            content = f"*[reasoning overshadows response — increase max_tokens for cleaner output]*\n\n{reasoning}"
 
         assistant_msg = {"role": "assistant", "content": content}
         if tool_calls:
@@ -253,12 +325,33 @@ def run_turn(
             tool_calls, plugin_callables, mcp_manager, tui
         )
         messages.extend(tool_results)
+        _auto_ruff_check(tool_results, tui)
 
     if not final_content and messages:
         for msg in reversed(messages):
             if msg.get("role") == "assistant" and msg.get("content"):
                 final_content = msg["content"]
                 break
+
+    # If we still have no content or the last round ended on tool_calls,
+    # make one final provider call asking for a summary
+    if not final_content or any(
+        m.get("tool_calls") for m in messages[-3:]
+    ):
+        if tui:
+            tui.reasoning("⏰ Tool rounds exhausted — requesting summary from model...")
+        messages.append({
+            "role": "user",
+            "content": (
+                "You have reached the maximum number of tool-call rounds. "
+                "Please provide a summary of what you've discovered so far. "
+                "Be concise."
+            )
+        })
+        final_resp = provider.chat(messages, temperature=0.3)
+        summary = final_resp.get("content") or ""
+        if summary:
+            final_content = summary
 
     memory_store.add(
         user_input=user_input,
@@ -271,7 +364,14 @@ def run_turn(
 
     learn_from_exchange(provider, user_input, final_content, skills_lib, tui)
 
-    return final_content
+    # Update conversation history with this turn
+    history.append({"role": "user", "content": user_input})
+    history.append({"role": "assistant", "content": final_content})
+    # Keep only last 20 exchanges (40 messages) max
+    if len(history) > 40:
+        history = history[-40:]
+
+    return final_content, history
 
 
 def main():
@@ -340,6 +440,7 @@ def main():
         )
 
     try:
+        conversation_history: list = []
         if args.query:
             query_text = " ".join(args.query)
             if tui:
@@ -347,11 +448,12 @@ def main():
             else:
                 print(f"\n> {query_text}")
 
-            response = run_turn(
+            response, conversation_history = run_turn(
                 provider, query_text,
                 memory_store, skills_lib,
                 plugin_callables, plugin_schemas,
                 mcp_manager, config, tui,
+                conversation_history=conversation_history,
             )
 
             if tui:
@@ -379,18 +481,20 @@ def main():
 
                 if tui:
                     with tui.thinking():
-                        response = run_turn(
+                        response, conversation_history = run_turn(
                             provider, user_input,
                             memory_store, skills_lib,
                             plugin_callables, plugin_schemas,
                             mcp_manager, config, tui,
+                            conversation_history=conversation_history,
                         )
                 else:
-                    response = run_turn(
+                    response, conversation_history = run_turn(
                         provider, user_input,
                         memory_store, skills_lib,
                         plugin_callables, plugin_schemas,
                         mcp_manager, config, tui,
+                        conversation_history=conversation_history,
                     )
 
                 if tui:

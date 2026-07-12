@@ -53,9 +53,4 @@ class ZenProvider:
         )
         resp.raise_for_status()
         data = resp.json()
-        msg = data["choices"][0]["message"]
-        # DeepSeek models may return reasoning in reasoning_content and empty content
-        # when max_tokens is too low — fall back to reasoning_content
-        if not msg.get("content") and msg.get("reasoning_content"):
-            msg["content"] = msg["reasoning_content"]
-        return msg
+        return data["choices"][0]["message"]

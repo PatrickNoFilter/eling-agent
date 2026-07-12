@@ -19,10 +19,9 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.table import Table
+from rich.markdown import Markdown
+from rich.console import Console
 from rich.text import Text
 from rich.rule import Rule
 from rich import box
@@ -73,12 +72,10 @@ class ElingTUI:
 
     @contextmanager
     def thinking(self, message: str = ""):
-        """Show an animated spinner while processing.
-        Wraps the full run_turn — stays alive through tool calls + model calls.
-        """
+        """Show an animated spinner while processing, with session timer."""
         if not message:
             dur = self.session_duration()
-            message = f"Thinking  ⏱ {dur}"
+            message = f"[bold {ACCENT}]🤖 Working[/]  [dim {DIM}]⏱ {dur}[/]"
         with self.console.status(f"[dim {DIM}]{message}[/]", spinner="dots12") as s:
             yield s
 
@@ -103,41 +100,34 @@ class ElingTUI:
         mcp: int = 0,
         model: str = "",
     ):
-        """Print startup banner with caduceus on left, metadata on right."""
-        layout = Table.grid(padding=(0, 2))
-        layout.add_column("left", justify="center", no_wrap=True)
-        layout.add_column("right", justify="left")
+        """Print startup banner with logo on top, features below."""
+        lines = list(BANNER)  # ELING wordmark
+        lines.append(f"[dim {DIM}]Eling v0.1.0 — Autonomous Agent[/]")
+        lines.append("")
 
-        left = "\n".join(BANNER)
-        left += f"\n[dim {DIM}]Eling v0.1.0[/]"
-
-        right_lines = [
-            f"[bold {ACCENT}]Eling — Autonomous Agent[/]",
-            f"[dim {DIM}]Memory · Skills · Plugins · MCP[/]",
-            "",
-        ]
         stats = []
-        if skills:
-            stats.append(f"[{TEXT}]{skills} skills[/]")
-        if memories:
-            stats.append(f"[{TEXT}]{memories} memories[/]")
         if plugins:
             stats.append(f"[{TEXT}]{plugins} plugins[/]")
         if mcp:
             stats.append(f"[{TEXT}]{mcp} MCP servers[/]")
-        if stats:
-            right_lines.append(f"[dim {DIM}]  {' · '.join(stats)}[/]")
+        if skills:
+            stats.append(f"[{TEXT}]{skills} skills[/]")
+        if memories:
+            stats.append(f"[{TEXT}]{memories} memories[/]")
         if model:
             short = model.split("/")[-1] if "/" in model else model
-            right_lines.append(f"[dim {DIM}]  Model: {short}[/]")
-        right_lines.append(f"[bold {AMBER}]  ⏱ {self.session_duration()}[/]")
+            # Prettify: deepseek-v4-flash-free → DeepSeek V4 Flash Free
+            pretty = short.replace("-", " ").title()
+            lines.append(f"[bold {ACCENT}]🤖 {pretty}[/]")
+        if stats:
+            lines.append(f"[dim {DIM}]{' · '.join(stats)}[/]")
 
-        right = "\n".join(right_lines)
-        layout.add_row(left, right)
+        lines.append(f"[bold {AMBER}]⏱ {self.session_duration()}[/]")
 
+        content = "\n".join(lines)
         self.console.print()
         self.console.print(
-            Panel(layout, box=box.ROUNDED, border_style=BRONZE, padding=(1, 2))
+            Panel(content, box=box.ROUNDED, border_style=BRONZE, padding=(1, 2))
         )
         self.console.print()
 
@@ -252,28 +242,51 @@ class ElingTUI:
     # ── User Input (Hermes-style) ─────────────────────────────────────
 
     def user_input(self, text: str):
-        """Print user input with a styled prompt."""
+        """Print user input with a styled prompt and session timer."""
         ts = datetime.now().strftime("%H:%M:%S")
-        self.console.print(f"[dim {DIM}]{ts}[/]  [bold {ACCENT}]┃[/]  [{TEXT}]{text}[/]")
+        dur = self.session_duration()
+        self.console.print(f"[dim {DIM}]{ts}[/]  [bold {ACCENT}]┃[/]  [{TEXT}]{text}[/]  [dim {DIM}]⏱ {dur}[/]")
         self.console.print()
 
     # ── Assistant Response (Hermes-style — Panel with Markdown) ───────
 
     def assistant(self, content: str):
-        """Render assistant response in a panel with Markdown formatting."""
+        """Render assistant response in a panel with Markdown formatting and session timer."""
         ts = datetime.now().strftime("%H:%M:%S")
+        dur = self.session_duration()
         md = Markdown(content, code_theme="monokai")
         self.console.print(
             Panel(
                 md,
                 title=f"[bold {ACCENT}]Eling[/]",
-                subtitle=f"[dim {DIM}]{ts}[/]",
+                subtitle=f"[dim {DIM}]{ts}  ⏱ {dur}[/]",
                 box=box.ROUNDED,
                 border_style=BRONZE,
                 padding=(1, 2),
             )
         )
         self.console.print()
+
+    # ── Reasoning (compact, dim — shows model's chain-of-thought) ─────
+
+    def reasoning(self, text: str):
+        """Display model reasoning in a compact dim panel."""
+        if not text or not text.strip():
+            return
+        lines = text.strip().splitlines()
+        # Trim to first 8 lines for compactness
+        if len(lines) > 8:
+            lines = lines[:8] + [f"[dim {DIM}]... ({len(lines)-8} more lines)[/]"]
+        content = "\n".join(lines)
+        self.console.print(
+            Panel(
+                content,
+                title=f"[dim {DIM}]🤔 reasoning[/]",
+                box=box.SQUARE,
+                border_style=DIM,
+                padding=(0, 1),
+            )
+        )
 
     # ── Tool Call (Hermes-style, compact) ─────────────────────────────
 
