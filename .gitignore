@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 *.db
+*.db-shm
+*.db-wal
 config.json
 .env
 .venv
@@ -9,3 +11,5 @@ venv/
 dist/
 build/
 .git/
+.eling/
+.agent-version
