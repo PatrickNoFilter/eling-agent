@@ -1,0 +1,9 @@
+{
+  "zen_api_key": "REPLACE_WITH_YOUR_ZEN_KEY",
+  "zen_base_url": "https://opencode.ai/zen/v1",
+  "zen_model": "deepseek-v4-flash-free",
+  "max_tool_rounds": 6,
+  "memory_db": "agent_memory.db",
+  "skills_db": "agent_skills.db",
+  "mcp_servers": {}
+}

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eling-agent"
+version = "0.1.0"
+description = "Personal autonomous agent CLI — memory, skills, MCP tools, and terminal UI"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = ["agent", "cli", "ai", "mcp", "memory", "terminal"]
+authors = [
+    {name = "PatrickNoFilter"},
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "requests>=2.31.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+eling-agent = "agent:main"
+
+[tool.setuptools.packages.find]
+include = ["plugins*"]
+
+[project.urls]
+Homepage = "https://github.com/PatrickNoFilter/eling-agent"
+Repository = "https://github.com/PatrickNoFilter/eling-agent"
