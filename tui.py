@@ -16,6 +16,7 @@ Usage:
 """
 from contextlib import contextmanager
 from pathlib import Path
+import os
 import threading
 import time
 from datetime import datetime
@@ -100,7 +101,7 @@ BANNER = [
 class ElingTUI:
     """Eling's terminal display — Rich-powered REPL with plan panel."""
 
-    def __init__(self, compact: bool = False):
+    def __init__(self, compact: bool = False, session_start: float | None = None):
         self.console = Console()
         self.compact = compact
         self._plan_steps: list[dict] = []
@@ -109,7 +110,8 @@ class ElingTUI:
         self._step_completed: dict[int, float] = {}
         self._interactive = False
         self.DIM = DIM
-        self.session_start = time.time()
+        self.ACCENT = ACCENT
+        self.session_start = session_start if session_start is not None else time.time()
         self._turn_start = None
 
         # Override Rich's default markdown heading colors (magenta → green)
@@ -126,43 +128,64 @@ class ElingTUI:
 
     # ── Thinking animation ──────────────────────────────────────────
 
+    _thinking_notifications: list[str] = []
+
+    def working_info(self, message: str):
+        """Enqueue a notification to display under the working spinner.
+
+        Call this during ``thinking()`` context to show progress updates
+        (tool calls, context hits, etc.) below the ``🤖 Working`` status.
+        """
+        self._thinking_notifications.append(message)
+
+    def _format_working_status(self) -> str:
+        """Build the status line with elapsed time + pending notifications."""
+        elapsed = format_time(time.time() - self._turn_start) if self._turn_start else "0s"
+        base = f"[bold {ACCENT}]🤖 Working[/]  [bold {AMBER}]⏱ {elapsed}[/]"
+        if self._thinking_notifications:
+            note = self._thinking_notifications[-1]
+            if len(note) > 50:
+                note = note[:47] + "..."
+            base += f"  [dim {DIM}]┃ {note}[/]"
+        return base
+
     @contextmanager
     def thinking(self, message: str = ""):
         """Show an animated spinner while processing, with live elapsed counter.
 
         The elapsed time (since turn_start was called) counts up in real time.
+        Call ``working_info()`` within the context to show updates under the
+        spinner line.
         """
         # Ensure turn timer is running
         if self._turn_start is None:
             self._turn_start = time.time()
 
+        self._thinking_notifications = []
         stop_event = threading.Event()
 
         def _updater(s):
             """Background thread: update status message with live elapsed."""
             while not stop_event.is_set():
-                elapsed = time.time() - self._turn_start
-                s.update(
-                    f"[bold {ACCENT}]🤖 Working[/]  "
-                    f"[bold {AMBER}]⏱ {format_time(elapsed)}[/]"
-                )
+                s.update(self._format_working_status())
                 time.sleep(0.5)
 
         with self.console.status(
-            f"[bold {ACCENT}]🤖 Working[/]  [bold {AMBER}]⏱ 0s[/]",
+            self._format_working_status(),
             spinner="dots12"
         ) as s:
             t = threading.Thread(target=_updater, args=(s,), daemon=True)
             try:
                 t.start()
             except RuntimeError:
-                pass  # thread already started or can't start
+                pass
             try:
                 yield s
             finally:
                 stop_event.set()
                 if t.is_alive():
                     t.join(timeout=1.0)
+                self._thinking_notifications = []
 
     def session_duration(self) -> str:
         """Return human-readable session uptime."""
@@ -187,7 +210,7 @@ class ElingTUI:
     ):
         """Print startup banner with logo on top, features below."""
         lines = list(BANNER)  # ELING wordmark
-        lines.append(f"[dim {DIM}]Eling v{VERSION} — Autonomous Agent[/]")
+        lines.append(f"[dim {DIM}]Eling v{VERSION} — Auto-Learning Agent[/]")
         lines.append("")
 
         stats = []
@@ -207,8 +230,7 @@ class ElingTUI:
         if stats:
             lines.append(f"[dim {DIM}]{' · '.join(stats)}[/]")
 
-        if time.time() - self.session_start >= 1:
-            lines.append(f"[bold {AMBER}]⏱ {self.session_duration()}[/]")
+        lines.append(f"[bold {AMBER}]⏱ Startup time: {self.session_duration()}[/]")
 
         content = "\n".join(lines)
         self.console.print()
@@ -364,6 +386,8 @@ class ElingTUI:
         if len(lines) > 8:
             lines = lines[:8] + [f"[dim {DIM}]... ({len(lines)-8} more lines)[/]"]
         content = "\n".join(lines)
+        first = lines[0][:60] if lines else ""
+        self.working_info(f"🤔 {first}")
         self.console.print(
             Panel(
                 content,
@@ -385,6 +409,7 @@ class ElingTUI:
         self.console.print(
             f"  {icon}  [{TEXT}]⚙ {name}[/]{arg_str}{dur_str}"
         )
+        self.working_info(f"⚙ {name} {args_preview}")
 
     # ── Tool Call Batch (compact view of multiple parallel calls) ─────
 
@@ -411,6 +436,7 @@ class ElingTUI:
             f"  [{DIM}]▸ [{ACCENT}]{source}[/] "
             f"(score={score:.2f})[/]  [{TEXT}]{short}[/]"
         )
+        self.working_info(f"⊞ {source} (score={score:.2f})")
 
     # ── Skill Learning (subtle one-liner) ─────────────────────────────
 
@@ -432,6 +458,7 @@ class ElingTUI:
     def recall_header(self):
         """Print compact header for memory recall."""
         self.console.print(f"[dim {DIM}]  ⊞ Recalled context — most relevant[/]")
+        self.working_info("Retrieving context...")
 
     # ── Start / end turn ──────────────────────────────────────────────
 
@@ -443,3 +470,85 @@ class ElingTUI:
     def turn_end(self):
         """End a turn."""
         self.console.print()
+
+    # ── Clear screen (scrollback-aware, Termux-friendly) ──────────────
+
+    def clear_screen(self):
+        """Thorough terminal clear — visible area + scrollback buffer."""
+        import sys
+        sys.stdout.write("\033[3J\033[2J\033[H")
+        sys.stdout.flush()
+
+    # ── Termux-style input prompt with Rich-styled toolbar ────────────
+
+    def input_prompt(self) -> str:
+        """Show Termux-style input with persistent history and extra-keys toolbar.
+
+        Uses ``prompt_toolkit`` under the hood (falls back to plain ``input()``
+        if the library is unavailable).  The bottom toolbar is styled with the
+        same steel-blue palette as the Rich TUI for a cohesive look.
+        """
+        try:
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.history import FileHistory
+            from prompt_toolkit.key_binding import KeyBindings
+            from prompt_toolkit.styles import Style
+            from prompt_toolkit.formatted_text import FormattedText
+
+            if not hasattr(self, "_pt_session"):
+                history_path = os.path.join(
+                    os.path.expanduser("~"), ".eling_history"
+                )
+                kb = KeyBindings()
+
+                @kb.add("c-l")
+                def _clear_screen(event):
+                    event.app.current_buffer.reset()
+                    os.system("clear" if os.name == "posix" else "cls")
+
+                style = Style.from_dict({
+                    "prompt": f"#{ACCENT[1:]} bold",
+                    "toolbar": f"#{BRONZE[1:]}",
+                    "toolbar.key": f"#{ACCENT[1:]} bold",
+                    "toolbar.sep": "#525252",
+                    "toolbar.info": f"#{DIM[1:]}",
+                })
+
+                self._pt_session = PromptSession(
+                    history=FileHistory(history_path),
+                    style=style,
+                    key_bindings=kb,
+                )
+
+            def _make_toolbar():
+                sep = ("class:toolbar.sep", " \u00b7 ")
+                dur = self.session_duration()
+                return FormattedText([
+                    ("class:toolbar.key", " Tab "),
+                    ("class:toolbar", "complete"),
+                    sep,
+                    ("class:toolbar.key", " \u2191\u2193 "),
+                    ("class:toolbar", "history"),
+                    sep,
+                    ("class:toolbar.key", " Esc Enter "),
+                    ("class:toolbar", "multi-line"),
+                    sep,
+                    ("class:toolbar.key", " Ctrl+L "),
+                    ("class:toolbar", "clear"),
+                    sep,
+                    ("class:toolbar.key", " Ctrl+D "),
+                    ("class:toolbar", "exit"),
+                    ("class:toolbar.sep", "   "),
+                    ("class:toolbar.info", f"\u23f1 {dur}"),
+                ])
+
+            prompt_text = FormattedText([
+                ("class:prompt", " \u276f "),
+            ])
+
+            return self._pt_session.prompt(
+                prompt_text,
+                bottom_toolbar=_make_toolbar,
+            )
+        except ImportError:
+            return input("").strip()

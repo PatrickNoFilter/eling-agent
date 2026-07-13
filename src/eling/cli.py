@@ -255,11 +255,23 @@ def main():
 
     # ── setup subcommand ──
     p_setup = sub.add_parser(
-        "setup", help="Configure Eling — API keys, defaults, and environment"
+        "setup", help="Configure Eling — provider, API key, model, and mode"
+    )
+    p_setup.add_argument(
+        "--provider", default="",
+        help="Provider name (opencode-zen, openai, anthropic, google, groq, deepseek, custom)",
     )
     p_setup.add_argument(
         "--zen-key", default="",
-        help="OpenCode Zen API key (will prompt if not provided)",
+        help="API key (will prompt if not provided)",
+    )
+    p_setup.add_argument(
+        "--model", default="",
+        help="Model name (e.g. deepseek-v4-flash-free, gpt-4o, claude-sonnet-4-5)",
+    )
+    p_setup.add_argument(
+        "--mode", default="",
+        help="Agent mode (auto, coding, research, edit, debug, ops)",
     )
 
     # ── doctor subcommand ──
@@ -719,78 +731,346 @@ def _run_doctor() -> None:
         sys.exit(1)
 
 
+# ── Provider registry ──────────────────────────────────────────────────
+
+_PROVIDERS = {
+    "1": {
+        "name": "OpenCode Zen",
+        "key": "opencode-zen",
+        "base_url": "https://opencode.ai/zen/v1",
+        "api_fetch": True,
+        "models": [
+            "zen/default",
+        ],
+    },
+    "2": {
+        "name": "OpenAI",
+        "key": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_fetch": True,
+        "models": [],
+    },
+    "3": {
+        "name": "Anthropic",
+        "key": "anthropic",
+        "base_url": "https://api.anthropic.com/v1",
+        "api_fetch": False,
+        "models": [
+            "claude-sonnet-4-5",
+            "claude-haiku-4-5",
+            "claude-opus-4",
+        ],
+    },
+    "4": {
+        "name": "Google (Gemini)",
+        "key": "google",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "api_fetch": True,
+        "models": [],
+    },
+    "5": {
+        "name": "Groq",
+        "key": "groq",
+        "base_url": "https://api.groq.com/openai/v1",
+        "api_fetch": True,
+        "models": [],
+    },
+    "6": {
+        "name": "DeepSeek",
+        "key": "deepseek",
+        "base_url": "https://api.deepseek.com/v1",
+        "api_fetch": True,
+        "models": [],
+    },
+    "7": {
+        "name": "Custom (OpenAI-compatible)",
+        "key": "custom",
+        "base_url": "",
+        "api_fetch": True,
+        "models": [],
+    },
+}
+
+_AGENT_MODES = {
+    "1": {"key": "auto", "desc": "Adaptive — auto-detects based on query"},
+    "2": {"key": "coding", "desc": "Optimized for code generation and editing"},
+    "3": {"key": "research", "desc": "Deep research, analysis, and reasoning"},
+    "4": {"key": "edit", "desc": "Focused editing with minimal chit-chat"},
+    "5": {"key": "debug", "desc": "Debug-first: verbose, step-by-step"},
+    "6": {"key": "ops", "desc": "Operations: fast, concise, tool-heavy"},
+}
+
+
+def _fetch_models(base_url: str, api_key: str) -> list[str] | None:
+    """Fetch available models from an OpenAI-compatible ``/v1/models`` endpoint.
+
+    Returns a sorted list of model IDs, or ``None`` on failure.
+    """
+    import requests
+
+    url = base_url.rstrip("/")
+    if not url.endswith("/v1"):
+        url += "/v1" if "/v1" not in url else ""
+    try:
+        resp = requests.get(
+            f"{url}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        ids = [m["id"] for m in data.get("data", []) if m.get("id")]
+        if not ids:
+            return None
+        return sorted(ids)
+    except Exception:
+        return None
+
+
+def _prompt_choice(
+    label: str, options: dict[str, dict], current: str = ""
+) -> str:
+    """Show a numbered menu and return the selected key."""
+    print(f"\n  {label}")
+    if current:
+        print(f"    (current: [dim]{current}[/])")
+    for key, opt in options.items():
+        desc = opt.get("desc", "")
+        detail = f" — {desc}" if desc else ""
+        print(f"    [{key}] {opt['name']}{detail}")
+    while True:
+        try:
+            choice = input("  Enter number: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Setup cancelled.")
+            return ""
+        if choice in options:
+            return choice
+        print(f"  Invalid choice '{choice}'. Pick a number from the list.")
+
+
 def _run_setup(args: argparse.Namespace) -> None:
-    """Configure Eling — focus on the OpenCode Zen API key for the agent."""
+    """Configure Eling interactively — provider, key, model, mode."""
     config_dir = os.path.join(os.path.expanduser("~"), "eling-agent")
     config_path = os.path.join(config_dir, "config.json")
 
-    print()
-    print("╔══════════════════════════════════════════════╗")
-    print("║     Eling Setup — OpenCode Zen API Key      ║")
-    print("╚══════════════════════════════════════════════╝")
-    print()
-
-    # 1. Resolve the key: CLI arg > env var > prompt
-    zen_key = args.zen_key or ""
-    if not zen_key:
-        for env_var in ("OPENCODE_API_KEY", "ZEN_API_KEY", "OPENAI_API_KEY"):
-            candidate = os.environ.get(env_var, "")
-            if candidate and candidate != "REPLACE_WITH_YOUR_ZEN_KEY":
-                zen_key = candidate
-                print(f"  ✓ Found key from ${env_var}")
-                break
-
-    if not zen_key or zen_key == "REPLACE_WITH_YOUR_ZEN_KEY":
-        print("  No Zen API key found in environment.")
-        print("  Get a free key at: https://opencode.ai/zen")
-        print()
-        try:
-            zen_key = input("  Paste your Zen API key: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n  Setup cancelled.")
-            return
-        if not zen_key:
-            print("  No key provided. Setup incomplete.")
-            return
-
-    # 2. Write to Eling project config.json
+    # Load existing config
     if os.path.exists(config_path):
         with open(config_path) as f:
             cfg = json.load(f)
     else:
         cfg = {}
 
-    cfg["zen_api_key"] = zen_key
+    print()
+    print("╔══════════════════════════════════════════════╗")
+    print("║           Eling Setup Wizard                ║")
+    print("╚══════════════════════════════════════════════╝")
+    print()
+    print("  This wizard will configure your provider,")
+    print("  API key, model, and agent mode.")
+    print()
+
+    # ── Step 1: Provider selection ─────────────────────────────────────
+    existing_provider = ""
+    if cfg.get("zen_base_url"):
+        for p in _PROVIDERS.values():
+            if p["base_url"] and p["base_url"] in cfg["zen_base_url"]:
+                existing_provider = p["name"]
+                break
+        if not existing_provider:
+            existing_provider = "custom"
+
+    prov_key = args.provider or ""
+    if not prov_key:
+        print("  Step 1 — Provider")
+        for k, p in _PROVIDERS.items():
+            marker = " ← current" if p["name"] == existing_provider else ""
+            print(f"    [{k}] {p['name']}{marker}")
+        print()
+        while True:
+            try:
+                prov_key = input("  Select provider [1-7]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Setup cancelled.")
+                return
+            if prov_key in _PROVIDERS:
+                break
+            print(f"  Invalid choice '{prov_key}'. Pick 1-7.")
+    elif prov_key not in _PROVIDERS:
+        print(f"  Unknown provider '{prov_key}'. Using OpenCode Zen.")
+        prov_key = "1"
+
+    provider = _PROVIDERS[prov_key]
+    print(f"  ✓ Provider: {provider['name']}")
+    print()
+
+    # ── Step 2: Base URL ───────────────────────────────────────────────
+    base_url = provider["base_url"]
+    if provider["key"] == "custom":
+        existing_url = cfg.get("zen_base_url", "")
+        prompt = "  Base URL: " if not existing_url else f"  Base URL [{existing_url}]: "
+        try:
+            entered = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Setup cancelled.")
+            return
+        base_url = entered if entered else (existing_url or "")
+        if not base_url:
+            print("  Base URL is required for custom provider.")
+            return
+    else:
+        print(f"  Base URL: {base_url}")
+    print()
+
+    # ── Step 3: API key ────────────────────────────────────────────────
+    existing_key = cfg.get("zen_api_key", "")
+    api_key = args.zen_key or ""
+    if not api_key:
+        key_source = ""
+        for env_var in ("OPENCODE_API_KEY", "ZEN_API_KEY", "OPENAI_API_KEY"):
+            candidate = os.environ.get(env_var, "")
+            if candidate and candidate != "REPLACE_WITH_YOUR_ZEN_KEY":
+                api_key = candidate
+                key_source = f"${env_var}"
+                break
+        if key_source:
+            masked = api_key[:6] + "…" + api_key[-4:] if len(api_key) > 10 else "(set)"
+            print(f"  ✓ API key found from {key_source}: {masked}")
+        else:
+            change = ""
+            if existing_key:
+                masked = existing_key[:6] + "…" + existing_key[-4:] if len(existing_key) > 10 else "(set)"
+                print(f"  Existing API key: {masked}")
+                try:
+                    change = input("  Change key? (y/N): ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Setup cancelled.")
+                    return
+            if not existing_key or change == "y":
+                print("  Get a key at: https://opencode.ai/zen")
+                try:
+                    api_key = input("  Paste your API key: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Setup cancelled.")
+                    return
+                if not api_key:
+                    print("  No key provided. Keeping existing.")
+                    api_key = existing_key
+            else:
+                api_key = existing_key
+    print()
+
+    # ── Step 4: Model selection ────────────────────────────────────────
+    model = args.model or ""
+    if not model:
+        existing_model = cfg.get("zen_model", "")
+        models = list(provider["models"])  # hardcoded fallback
+
+        # Try fetching live models from the API
+        if provider.get("api_fetch") and api_key and base_url:
+            print("  Step 4 — Model (fetching from API...)")
+            fetched = _fetch_models(base_url, api_key)
+            if fetched:
+                models = fetched
+            else:
+                print("  (API unavailable — using curated list)")
+        else:
+            print("  Step 4 — Model")
+
+        if models:
+            model_map = {}
+            for i, m in enumerate(models, 1):
+                model_map[str(i)] = m
+                marker = " ← current" if m == existing_model else ""
+                print(f"    [{i}] {m}{marker}")
+            print("    [c] Custom (type manually)")
+            print()
+            while True:
+                try:
+                    choice = input("  Select model: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Setup cancelled.")
+                    return
+                if choice in model_map:
+                    model = model_map[choice]
+                    break
+                if choice.lower() == "c":
+                    try:
+                        model = input("  Enter model name: ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        print("\n  Setup cancelled.")
+                        return
+                    if model:
+                        break
+                if existing_model:
+                    model = existing_model
+                    print(f"  Using existing: {model}")
+                    break
+                print("  Invalid choice.")
+        else:
+            prompt = f"  Model [{existing_model}]: " if existing_model else "  Model: "
+            try:
+                model = input(prompt).strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Setup cancelled.")
+                return
+            model = model or existing_model
+    print(f"  ✓ Model: {model}")
+    print()
+
+    # ── Step 5: Agent mode ─────────────────────────────────────────────
+    mode = args.mode or ""
+    if not mode:
+        existing_mode = cfg.get("agent_mode", "auto")
+        change = ""
+        if existing_mode:
+            print(f"  Current mode: {existing_mode}")
+            try:
+                change = input("  Change mode? (y/N): ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Setup cancelled.")
+                return
+        if not existing_mode or change == "y":
+            print("  Step 5 — Agent Mode")
+            for k, m in _AGENT_MODES.items():
+                marker = " ← current" if m["key"] == existing_mode else ""
+                print(f"    [{k}] {m['key']}{marker}")
+            print()
+            while True:
+                try:
+                    choice = input("  Select mode: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Setup cancelled.")
+                    return
+                if choice in _AGENT_MODES:
+                    mode = _AGENT_MODES[choice]["key"]
+                    break
+                print(f"  Invalid choice '{choice}'.")
+        else:
+            mode = existing_mode
+    print(f"  ✓ Mode: {mode}")
+    print()
+
+    # ── Write config ───────────────────────────────────────────────────
+    cfg["zen_api_key"] = api_key
+    cfg["zen_model"] = model
+    cfg["zen_base_url"] = base_url
+    cfg["agent_mode"] = mode
 
     os.makedirs(config_dir, exist_ok=True)
     with open(config_path, "w") as f:
         json.dump(cfg, f, indent=4)
 
-    masked = zen_key[:6] + "…" + zen_key[-4:] if len(zen_key) > 10 else "(set)"
-    print(f"\n  ✓ Written zen_api_key to {config_path}")
-    print(f"    Key: {masked}")
-
-    # 3. Also write to eling-brain config for upstream eling commands
-    brain_home = os.environ.get(
-        "ELING_HOME",
-        os.path.join(os.path.expanduser("~"), ".hermes", "eling-brain"),
-    )
-    brain_config = os.path.join(brain_home, "config.json")
-    if os.path.isdir(brain_home) and os.access(brain_home, os.W_OK):
-        try:
-            if os.path.exists(brain_config):
-                with open(brain_config) as f:
-                    bc = json.load(f)
-            else:
-                bc = {}
-            bc["zen_api_key"] = zen_key
-            with open(brain_config, "w") as f:
-                json.dump(bc, f, indent=2)
-            print(f"  ✓ Also written to {brain_config}")
-        except OSError:
-            pass
-
-    # 4. Quick test
+    masked = api_key[:6] + "…" + api_key[-4:] if len(api_key) > 10 else "(set)"
+    print("  ─────────────────────────────────────")
+    print(f"  Config written to {config_path}")
+    print(f"    Provider:  {provider['name']}")
+    print(f"    API:       {base_url}")
+    print(f"    Key:       {masked}")
+    print(f"    Model:     {model}")
+    print(f"    Mode:      {mode}")
+    print("  ─────────────────────────────────────")
     print()
     print("  To verify: run  eling 'your query here'")
     print()

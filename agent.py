@@ -17,7 +17,6 @@ import time
 from memory import MemoryStore
 from skills import SkillLibrary
 from provider import ZenProvider
-from workspace_manager import WorkspaceManager
 from mcp_client import MCPManager
 from plugins import load_plugins
 
@@ -41,6 +40,10 @@ def load_config(path: str = "config.json") -> dict:
     if not os.path.exists(path):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         path = os.path.join(script_dir, "config.json")
+    if not os.path.exists(path):
+        home_cfg = os.path.join(os.path.expanduser("~"), "eling-agent", "config.json")
+        if os.path.exists(home_cfg):
+            path = home_cfg
     with open(path) as f:
         return json.load(f)
 
@@ -84,7 +87,7 @@ def build_system_prompt(
 PY_FILE_RE = re.compile(r'(?:^|\s)(/[^\s]*\.py|[a-zA-Z0-9_./-]+\.py)')
 
 
-def _auto_ruff_check(tool_results: list[dict], tui=None, *, workspace_manager=None) -> None:
+def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
     """Scan tool results for .py file references and run ruff check.
 
     Called after each tool round — catches syntax/quality issues
@@ -137,7 +140,6 @@ def run_tool_calls(
     plugin_callables: dict,
     mcp_manager: MCPManager,
     tui=None,
-    workspace_manager=None,
 ) -> list[dict]:
     """Execute all tool calls from one model turn concurrently."""
     if not tool_calls:
@@ -156,10 +158,6 @@ def run_tool_calls(
                 arguments = {}
         else:
             arguments = arguments_raw
-
-        # Remap file paths to workspace before executing
-        if workspace_manager and workspace_manager.active:
-            arguments = workspace_manager.remap_args(func_name, arguments)
 
         tool_call_id = tc.get("id", "")
         t0 = time.time()
@@ -185,10 +183,6 @@ def run_tool_calls(
             result = f"(unknown tool: {func_name})"
             ok = False
 
-        # Remap workspace paths back to original in results
-        if workspace_manager and workspace_manager.active:
-            result = workspace_manager.remap_result(func_name, result)
-
         dur = time.time() - t0
         if tui:
             args_preview = ""
@@ -213,13 +207,16 @@ def learn_from_exchange(
     agent_output: str,
     skills_lib: SkillLibrary,
     tui=None,
-    workspace_manager=None,
 ):
     """
     Make one extra call to the model asking whether to learn a skill
     from this exchange. If the model says learn=true, upsert into the
     skill library.
     """
+    _max = 2000
+    truncated_input = user_input[:_max] + ("..." if len(user_input) > _max else "")
+    truncated_output = agent_output[:_max] + ("..." if len(agent_output) > _max else "")
+
     messages = [
         {
             "role": "system",
@@ -236,21 +233,23 @@ def learn_from_exchange(
         },
         {
             "role": "user",
-            "content": f"User query: {user_input}\n\nAssistant response: {agent_output}",
+            "content": f"User query: {truncated_input}\n\nAssistant response: {truncated_output}",
         },
     ]
     try:
         resp = provider.chat(messages, max_tokens=500, temperature=0.2)
         content = resp.get("content", "")
-        if content.startswith("```"):
-            lines = content.strip().splitlines()
-            content = "\n".join(line for line in lines if not line.startswith("```"))
+        if not content:
+            return
+        lines = content.strip().splitlines()
+        filtered = [line for line in lines if not line.startswith("```")]
+        content = "\n".join(filtered).strip()
         data = json.loads(content)
         if data.get("learn") and data.get("name"):
             skills_lib.upsert(
                 name=data["name"],
-                trigger=data.get("trigger", user_input),
-                body=data.get("body", agent_output),
+                trigger=data.get("trigger", user_input[:200]),
+                body=data.get("body", agent_output[:1000]),
             )
             log.info("Learned new skill: %s", data["name"])
             if tui:
@@ -269,7 +268,6 @@ def run_turn(
     mcp_manager: MCPManager,
     config: dict,
     tui=None,
-    workspace_manager=None,
     *,
     conversation_history: list | None = None,
 ) -> tuple[str, list]:
@@ -279,7 +277,7 @@ def run_turn(
     passed to the next turn for continuity.
     """
     history = list(conversation_history) if conversation_history else []
-    max_tool_rounds = min(config.get("max_tool_rounds", 30), 100)
+    max_tool_rounds = config.get("max_tool_rounds", 200)
 
     # Retrieve relevant context
     skills_hits = skills_lib.relevant(user_input, k=3)
@@ -306,10 +304,6 @@ def run_turn(
     all_tool_schemas.extend(mcp_manager.openai_tools())
 
     final_content = ""
-
-    # Initialize workspace manager for copy-on-write editing
-    workspace_manager = WorkspaceManager()
-    workspace_setup_done = False
 
     for round_num in range(max_tool_rounds):
         resp = provider.chat(
@@ -341,20 +335,11 @@ def run_turn(
             final_content = content
             break
 
-        # Set up workspace on first tool round with file paths
-        if not workspace_setup_done:
-            workspace_setup_done = workspace_manager.setup_from_tool_calls(tool_calls)
-            if workspace_setup_done and tui:
-                tui.console.print(
-                    f"  [dim {tui.DIM}]📦 workspace: {workspace_manager.summary()}[/]"
-                )
-
         tool_results = run_tool_calls(
             tool_calls, plugin_callables, mcp_manager, tui,
-            workspace_manager=workspace_manager,
         )
         messages.extend(tool_results)
-        _auto_ruff_check(tool_results, tui, workspace_manager=workspace_manager)
+        _auto_ruff_check(tool_results, tui)
 
     if not final_content and messages:
         for msg in reversed(messages):
@@ -372,7 +357,7 @@ def run_turn(
         messages.append({
             "role": "user",
             "content": (
-                "You have reached the maximum number of tool-call rounds. "
+                "Tool rounds exhausted. "
                 "Please provide a summary of what you've discovered so far. "
                 "Be concise."
             )
@@ -381,13 +366,6 @@ def run_turn(
         summary = final_resp.get("content") or ""
         if summary:
             final_content = summary
-
-    # Sync workspace changes back to original paths
-    synced = workspace_manager.sync_back()
-    if synced and tui:
-        tui.console.print(
-            f"  [dim {tui.DIM}]✓ synced {synced} file(s) back to original paths[/]"
-        )
 
     memory_store.add(
         user_input=user_input,
@@ -428,6 +406,7 @@ def _count_mcp_daemons() -> int:
 
 
 def main():
+    _start_time = time.time()
     parser = argparse.ArgumentParser(description="Eling — autonomous agent")
     parser.add_argument(
         "query", nargs="*",
@@ -465,7 +444,7 @@ def main():
     # ── Initialise TUI ──────────────────────────────────────────────
     if not args.compact:
         from tui import ElingTUI
-        tui = ElingTUI()
+        tui = ElingTUI(session_start=_start_time)
         tui.console.clear()
     else:
         print("\033[2J\033[H", end="")
@@ -519,7 +498,10 @@ def main():
         else:
             while True:
                 try:
-                    user_input = input("\n> " if not tui else "").strip()
+                    if tui:
+                        user_input = tui.input_prompt().strip()
+                    else:
+                        user_input = input("\n> ").strip()
                 except (EOFError, KeyboardInterrupt):
                     print()
                     break
@@ -531,13 +513,16 @@ def main():
                         tui.console.clear()
                     else:
                         print("\033[2J\033[H", end="")
-                    new_dir = "/root/eling-workspce/auto-20260713_122221/eling-agents"
+                    ts = time.strftime("%Y%m%d_%H%M%S")
+                    new_dir = os.path.join(os.path.expanduser("~"), "eling-workspace", f"session-{ts}")
                     os.makedirs(new_dir, exist_ok=True)
-                    cfg_dst = os.path.join(new_dir, "config.json")
-                    if not os.path.exists(cfg_dst) and os.path.exists("config.json"):
-                        shutil.copy2("config.json", cfg_dst)
+                    for fname in ("config.json", config.get("memory_db", "agent_memory.db"), config.get("skills_db", "agent_skills.db")):
+                        src = os.path.abspath(fname)
+                        dst = os.path.join(new_dir, fname)
+                        if os.path.exists(src) and not os.path.exists(dst):
+                            shutil.copy2(src, dst)
                     if tui:
-                        tui.console.print("[bold yellow]♻ Restarting in " + new_dir + "...[/]")
+                        tui.console.print(f"[bold yellow]\u267b Restarting in {new_dir}...[/]")
                     mcp_manager.stop_all()
                     memory_store.close()
                     skills_lib.close()
