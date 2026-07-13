@@ -27,6 +27,20 @@ from rich.text import Text
 from rich.rule import Rule
 from rich import box
 
+# ── Formatting helpers ─────────────────────────────────────────────────
+
+def format_time(seconds: float) -> str:
+    """Format seconds into human-readable time (e.g. 90 → 1m30s)."""
+    dur = int(seconds)
+    hours, rem = divmod(dur, 3600)
+    mins, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {mins}m {secs}s"
+    if mins:
+        return f"{mins}m {secs}s"
+    return f"{secs}s"
+
+
 # ── Read version from pyproject.toml ──────────────────────────────────
 
 _ROOT = Path(__file__).resolve().parent
@@ -95,17 +109,59 @@ class ElingTUI:
         self._interactive = False
         self.DIM = DIM
         self.session_start = time.time()
+        self._turn_start = None
+
+        # Override Rich's default markdown heading colors (magenta → green)
+        from rich.theme import Theme
+        from rich.style import Style as RichStyle
+        self.console.push_theme(Theme({
+            'markdown.h1': RichStyle(bold=True, color="#90E0EF"),
+            'markdown.h2': RichStyle(underline=True, color="#90E0EF"),
+            'markdown.h3': RichStyle(bold=True, color="#90E0EF"),
+            'markdown.h4': RichStyle(italic=True, color="#90E0EF"),
+            'markdown.h5': RichStyle(italic=True, color="#90E0EF"),
+            'markdown.h6': RichStyle(dim=True, color="#90E0EF"),
+        }))
 
     # ── Thinking animation ──────────────────────────────────────────
 
     @contextmanager
     def thinking(self, message: str = ""):
-        """Show an animated spinner while processing, with session timer."""
-        if not message:
-            dur = self.session_duration()
-            message = f"[bold {ACCENT}]🤖 Working[/]  [dim {DIM}]⏱ {dur}[/]"
-        with self.console.status(f"[dim {DIM}]{message}[/]", spinner="dots12") as s:
-            yield s
+        """Show an animated spinner while processing, with live elapsed counter.
+
+        The elapsed time (since turn_start was called) counts up in real time.
+        """
+        # Ensure turn timer is running
+        if self._turn_start is None:
+            self._turn_start = time.time()
+
+        stop_event = threading.Event()
+
+        def _updater(s):
+            """Background thread: update status message with live elapsed."""
+            while not stop_event.is_set():
+                elapsed = time.time() - self._turn_start
+                s.update(
+                    f"[bold {ACCENT}]🤖 Working[/]  "
+                    f"[bold {AMBER}]⏱ {format_time(elapsed)}[/]"
+                )
+                time.sleep(0.5)
+
+        with self.console.status(
+            f"[bold {ACCENT}]🤖 Working[/]  [bold {AMBER}]⏱ 0s[/]",
+            spinner="dots12"
+        ) as s:
+            t = threading.Thread(target=_updater, args=(s,), daemon=True)
+            try:
+                t.start()
+            except RuntimeError:
+                pass  # thread already started or can't start
+            try:
+                yield s
+            finally:
+                stop_event.set()
+                if t.is_alive():
+                    t.join(timeout=1.0)
 
     def session_duration(self) -> str:
         """Return human-readable session uptime."""

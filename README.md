@@ -2,7 +2,7 @@
 
 # 🧠 Eling Agent
 
-**Personal autonomous agent CLI — memory, skills, MCP tools, terminal UI**
+**Personal auto-learning agent CLI — memory, skills, MCP tools, terminal UI**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -16,10 +16,12 @@
 
 ## ✨ What is Eling Agent?
 
-**Eling Agent** is a lightweight, personal autonomous agent that runs in your terminal. It combines:
+**Eling Agent** is a lightweight, personal auto-learning agent that runs in your terminal. It combines:
 
 - **🧠 Local memory** — stores past exchanges, learns from experience
 - **📚 Skill library** — auto-discovers reusable patterns from your conversations
+- **📦 Workspace Manager** — copy-on-write file editing with automatic project root detection
+- **⏱ Live elapsed timer** — real-time thinking spinner with elapsed time counter
 - **🔧 MCP tools** — connect any MCP server (web search, filesystem, firecrawl, etc.)
 - **🎨 Rich TUI** — beautiful terminal UI with banner, thinking spinner, session uptime
 - **🧩 Plugin system** — extend with Python plugins (shell, files, web)

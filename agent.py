@@ -16,6 +16,7 @@ import time
 from memory import MemoryStore
 from skills import SkillLibrary
 from provider import ZenProvider
+from workspace_manager import WorkspaceManager
 from mcp_client import MCPManager
 from plugins import load_plugins
 
@@ -80,7 +81,7 @@ def build_system_prompt(
 PY_FILE_RE = re.compile(r'(?:^|\s)(/[^\s]*\.py|[a-zA-Z0-9_./-]+\.py)')
 
 
-def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
+def _auto_ruff_check(tool_results: list[dict], tui=None, *, workspace_manager=None) -> None:
     """Scan tool results for .py file references and run ruff check.
 
     Called after each tool round — catches syntax/quality issues
@@ -152,6 +153,10 @@ def run_tool_calls(
         else:
             arguments = arguments_raw
 
+        # Remap file paths to workspace before executing
+        if workspace_manager and workspace_manager.active:
+            arguments = workspace_manager.remap_args(func_name, arguments)
+
         tool_call_id = tc.get("id", "")
         t0 = time.time()
 
@@ -175,6 +180,10 @@ def run_tool_calls(
         else:
             result = f"(unknown tool: {func_name})"
             ok = False
+
+        # Remap workspace paths back to original in results
+        if workspace_manager and workspace_manager.active:
+            result = workspace_manager.remap_result(func_name, result)
 
         dur = time.time() - t0
         if tui:
@@ -291,6 +300,11 @@ def run_turn(
     all_tool_schemas.extend(mcp_manager.openai_tools())
 
     final_content = ""
+
+    # Initialize workspace manager for copy-on-write editing
+    workspace_manager = WorkspaceManager()
+    workspace_setup_done = False
+
     for round_num in range(max_tool_rounds):
         resp = provider.chat(
             messages,
@@ -321,11 +335,20 @@ def run_turn(
             final_content = content
             break
 
+        # Set up workspace on first tool round with file paths
+        if not workspace_setup_done:
+            workspace_setup_done = workspace_manager.setup_from_tool_calls(tool_calls)
+            if workspace_setup_done and tui:
+                tui.console.print(
+                    f"  [dim {tui.DIM}]📦 workspace: {workspace_manager.summary()}[/]"
+                )
+
         tool_results = run_tool_calls(
-            tool_calls, plugin_callables, mcp_manager, tui
+            tool_calls, plugin_callables, mcp_manager, tui,
+            workspace_manager=workspace_manager,
         )
         messages.extend(tool_results)
-        _auto_ruff_check(tool_results, tui)
+        _auto_ruff_check(tool_results, tui, workspace_manager=workspace_manager)
 
     if not final_content and messages:
         for msg in reversed(messages):
@@ -353,6 +376,13 @@ def run_turn(
         if summary:
             final_content = summary
 
+    # Sync workspace changes back to original paths
+    synced = workspace_manager.sync_back()
+    if synced and tui:
+        tui.console.print(
+            f"  [dim {tui.DIM}]✓ synced {synced} file(s) back to original paths[/]"
+        )
+
     memory_store.add(
         user_input=user_input,
         agent_output=final_content,
@@ -372,6 +402,23 @@ def run_turn(
         history = history[-40:]
 
     return final_content, history
+
+
+def _count_mcp_daemons() -> int:
+    """Count running MCP daemon processes (brain, continuum, termux, etc.)."""
+    try:
+        r = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True, text=True, timeout=5,
+        )
+        count = 0
+        for line in r.stdout.split("\n"):
+            if "mcp" in line.lower() and "grep" not in line:
+                if any(name in line for name in ("brain-mcp", "continuum-mcp", "termux-mcp")):
+                    count += 1
+        return count
+    except Exception:
+        return 0
 
 
 def main():
@@ -426,7 +473,7 @@ def main():
             skills=skill_count,
             memories=mem_count,
             plugins=len(plugin_schemas),
-            mcp=len(mcp_manager.connections),
+            mcp=len(mcp_manager.connections) + _count_mcp_daemons(),
             model=config.get("zen_model", ""),
         )
         tui.console.print(
@@ -436,7 +483,7 @@ def main():
     else:
         log.info(
             "Eling ready — %d plugins, %d MCP server(s), %d skills, %d memories",
-            len(plugin_schemas), len(mcp_manager.connections),
+            len(plugin_schemas), len(mcp_manager.connections) + _count_mcp_daemons(),
             skill_count, mem_count,
         )
 

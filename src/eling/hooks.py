@@ -58,6 +58,7 @@ HOOK_VERIFY_REQUEST = "verify_request"
 HOOK_SYNC_START = "sync_start"
 HOOK_SYNC_COMPLETE = "sync_complete"
 HOOK_SYNC_ERROR = "sync_error"
+HOOK_LEARN_SKILL = "learn_skill"
 
 ALL_HOOKS = [
     HOOK_SESSION_START,
@@ -76,6 +77,7 @@ ALL_HOOKS = [
     HOOK_SYNC_START,
     HOOK_SYNC_COMPLETE,
     HOOK_SYNC_ERROR,
+    HOOK_LEARN_SKILL,
 ]
 
 # ---------------------------------------------------------------------------
@@ -453,6 +455,72 @@ def _make_noop_handler(brain: "Brain" = None) -> HookHandler:  # type: ignore[as
 # ---------------------------------------------------------------------------
 # Helper: register all default built-in handlers on a brain
 # ---------------------------------------------------------------------------
+
+
+def _make_learn_skill_handler(brain: "Brain") -> HookHandler:
+    """HOOK: learn_skill — extract and store a reusable skill from an exchange."""
+
+    def handler(name: str, ctx: dict) -> dict:
+
+        user_input = ctx.get("user_input", "")
+        agent_output = ctx.get("agent_output", "")
+        skills_lib = ctx.get("skills_lib")
+
+        if skills_lib is None or not user_input or not agent_output:
+            return {"learned": False, "reason": "missing context"}
+
+        # Import provider from the calling context or use a default
+        try:
+            provider = ctx.get("provider")
+            if provider is None:
+                return {"learned": False, "reason": "no provider"}
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract reusable skill patterns from conversations.\n\n"
+                        "A skill is worth learning when the assistant solved a real problem — "
+                        "wrote code, debugged, explained a technique, or performed multi-step work.\n\n"
+                        "Examples:\n"
+                        '- {"learn": true, "name": "live-elapsed-timer", "trigger": "add time counter", "body": "1) Record start time 2) Spawn daemon thread updating display every 0.5s 3) Show elapsed seconds 4) Join on exit"}\n'
+                        '- {"learn": true, "name": "system-health-check", "trigger": "check system health", "body": "Run top -bn1, free -h, df -h, uptime to get system metrics"}\n\n'
+                        "Respond STRICT JSON only. No markdown, no extra text.\n"
+                        'If learn is false: {"learn": false}'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"User query: {user_input[:500]}\n\nAssistant response: {agent_output[:1000]}",
+                },
+            ]
+            resp = provider.chat(messages, max_tokens=2500, temperature=0.2)
+            response_content = resp.get("content", "")
+            if response_content.startswith("```"):
+                lines = response_content.strip().splitlines()
+                response_content = "\n".join(line for line in lines if not line.startswith("```"))
+            if not response_content.strip():
+                return {"learned": False, "reason": "empty response"}
+
+            import json
+            data = json.loads(response_content)
+            if data.get("learn") and data.get("name"):
+                skills_lib.upsert(
+                    name=data["name"],
+                    trigger=data.get("trigger", user_input),
+                    body=data.get("body", agent_output),
+                )
+                return {
+                    "learned": True,
+                    "skill_name": data["name"],
+                }
+            return {"learned": False, "reason": "model declined"}
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("learn_skill handler error: %s", e)
+            return {"learned": False, "reason": str(e)}
+
+    return handler
 
 
 def register_default_hooks(brain: "Brain") -> HookRegistry:

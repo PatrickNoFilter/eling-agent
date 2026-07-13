@@ -122,5 +122,11 @@ class SkillLibrary:
             self._conn.commit()
             return cur.rowcount > 0
 
+    def count(self) -> int:
+        """Return total number of skills (efficient COUNT)."""
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM skills").fetchone()
+        return row[0] if row else 0
+    
     def close(self):
         self._conn.close()

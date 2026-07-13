@@ -53,6 +53,11 @@ def top_k(
     Returns:
         List of (item, score) tuples sorted by score descending.
     """
+    # Empty query → return all candidates up to k
+    if not query or not query.strip():
+        scored = [(item, 0.0) for item in candidates]
+        return scored[:k]
+    
     query_vec = vectorize(query)
 
     scored = []

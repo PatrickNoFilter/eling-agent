@@ -1145,12 +1145,12 @@ class FactsLayer:
 
                         # Merge tags
                         all_tags = set()
-                        for t in fa["tags"].split(","):
-                            if t.strip():
-                                all_tags.add(t.strip())
-                        for t in fb["tags"].split(","):
-                            if t.strip():
-                                all_tags.add(t.strip())
+                        for tag in fa["tags"].split(","):
+                            if tag.strip():
+                                all_tags.add(tag.strip())
+                        for tag in fb["tags"].split(","):
+                            if tag.strip():
+                                all_tags.add(tag.strip())
                         new_tags = ",".join(sorted(all_tags))
 
                         # Transfer entity links from merge_id to keep_id
@@ -1217,6 +1217,15 @@ class FactsLayer:
                         )
 
                         skip_ids.add(merge_id)
+
+                        # If the kept fact was flagged as contradiction_pending,
+                        # clear the stale flag — the contradicting fact was just merged in.
+                        if _tag_has(new_tags, self.CONTRADICTION_FLAG):
+                            new_tags = _tag_remove(new_tags, self.CONTRADICTION_FLAG)
+                            self._conn.execute(
+                                "UPDATE facts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE fact_id = ?",
+                                (new_tags, keep_id),
+                            )
                         merged += 1
 
             self._conn.commit()
