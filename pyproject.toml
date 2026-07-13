@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eling-agent"
-version = "0.1.5"
+version = "0.1.6"
 description = "Personal auto-learning agent CLI — memory, skills, MCP tools, workspace, and terminal UI"
 readme = "README.md"
 license = {text = "MIT"}

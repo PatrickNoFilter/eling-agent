@@ -2,11 +2,12 @@
 
 # 🧠 Eling Agent
 
-**Personal auto-learning agent CLI — memory, skills, MCP tools, terminal UI**
+**Personal auto-learning agent CLI — memory, skills, MCP tools, workspace, and terminal UI**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/github-PatrickNoFilter/eling--agent-8A2BE2)](https://github.com/PatrickNoFilter/eling-agent)
+[![Version](https://img.shields.io/badge/version-0.1.6-blueviolet)](https://github.com/PatrickNoFilter/eling-agent/releases)
 
 *"Eling" (Javanese): to remember, to be conscious, to be aware*
 
@@ -140,12 +141,15 @@ eling-agent/
 ├── memory.py             # MemoryStore — BM25 + cosine similarity retrieval
 ├── skills.py             # SkillLibrary — auto-learned skill storage
 ├── textsim.py            # Text utilities — tokenizer, similarity
+├── workspace_manager.py  # Copy-on-write file editing with project detection
 ├── plugins/
 │   ├── __init__.py       # Plugin loader
 │   └── shell_plugin.py   # Shell command execution
 ├── config.example.json   # Template configuration
 ├── requirements.txt      # Python dependencies
 ├── pyproject.toml        # Package metadata
+├── CREDITS.md            # Credits and acknowledgements
+├── CREDITS.library.md    # Library-level credits
 └── LICENSE               # MIT license
 ```
 
@@ -165,15 +169,58 @@ eling-agent/
 
 ---
 
+## 📚 Dependencies
+
+### Core
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| [eling](https://pypi.org/project/eling/) | ≥0.12.0 | 8-layer second-brain memory library (HRR, BM25, Zettelkasten) |
+| [httpx](https://pypi.org/project/httpx/) | ≥0.27 | HTTP client for API calls and Notion layer |
+| [requests](https://pypi.org/project/requests/) | ≥2.31 | HTTP client for legacy API calls |
+| [prompt_toolkit](https://pypi.org/project/prompt-toolkit/) | ≥3.0 | Interactive REPL prompt |
+| [rich](https://pypi.org/project/rich/) | ≥13.0 | Terminal UI rendering (markdown, panels, tables) |
+
+### Optional
+
+| Group | Packages | Purpose |
+|-------|----------|---------|
+| `notion` | httpx | Notion integration layer |
+| `hrr` | numpy≥1.24 | Holographic Reduced Representations |
+| `embeddings` | sentence-transformers≥3.0 | Embedding-based retrieval |
+| `markdownify` | markitdown[pdf] | Document-to-Markdown conversion |
+| `markdownify_all` | markitdown[all] | All document formats |
+| `all` | everything above | Full feature set |
+
+Install extras with:
+
+```bash
+pip install "eling-agent[hrr,embeddings,notion,markdownify]"
+```
+
+---
+
 ## 🤝 Credits
 
-Eling Agent was created by **PatrickNoFilter**.
+Eling Agent was created by **PatrickNoFilter** ([@PatrickNoFilter](https://github.com/PatrickNoFilter)).
 
-- Built on the **Hermes Agent** framework patterns
-- Uses **Rich** for terminal rendering
-- Uses **OpenCode Zen** API for LLM inference
-- Inspired by Zero/OpenCode CLI agent patterns
-- The name *Eling* comes from Javanese *eling* — to remember, to be conscious
+### Built With
+
+| Project | Contribution |
+|---------|-------------|
+| **Hermes Agent** (Nous Research) | TUI design patterns, memory/session/skill framework inspiration |
+| **OpenCode Zen** | Free LLM inference API |
+| **Zero / OpenCode CLI** | CLI agent patterns, telemetry format |
+| **Rich** | Terminal rendering engine |
+| **Eling memory library** | 8-layer second brain (HRR, BM25, Zettelkasten) |
+| **Agent-Blackbox** (Nous Research) | Flight recorder, 11-metric context scoring |
+| **Continuum** | Multi-agent orchestration, PLOT protocol |
+| **Firecrawl MCP** | Web scraping and search |
+| **Markdownify MCP** (Zach Caceres) | Document conversion |
+| **Claude Code / Codex** | Tool-calling loop patterns |
+| **dusterbloom** | HRR phase-encoding implementation |
+
+See [CREDITS.md](CREDITS.md) and [CREDITS.library.md](CREDITS.library.md) for full attribution.
 
 ---
 
