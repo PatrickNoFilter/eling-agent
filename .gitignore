@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+config.json
+.env
+.venv
+venv/
+*.egg-info/
+dist/
+build/
+.git/
+.eling/
+.agent-version
