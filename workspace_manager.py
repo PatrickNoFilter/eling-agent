@@ -135,7 +135,7 @@ class WorkspaceManager:
             # Copy project to workspace
             try:
                 shutil.copytree(
-                    root, ws_dir, symlinks=False,
+                    root, ws_dir, symlinks=True,
                     ignore_dangling_symlinks=True,
                     ignore=shutil.ignore_patterns('.git'),
                 )
@@ -143,6 +143,8 @@ class WorkspaceManager:
                 self._project_roots.add(root)
                 log.info("Copied %s -> %s (%d files)", root, ws_dir,
                          sum(len(files) for _, _, files in os.walk(ws_dir)))
+            except RecursionError:
+                log.warning("Skipped %s: circular symlink detected", root)
             except Exception as exc:
                 log.warning("Failed to copy %s to workspace: %s", root, exc)
 

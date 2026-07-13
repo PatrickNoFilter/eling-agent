@@ -16,6 +16,7 @@ Usage:
 """
 from contextlib import contextmanager
 from pathlib import Path
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -206,7 +207,8 @@ class ElingTUI:
         if stats:
             lines.append(f"[dim {DIM}]{' · '.join(stats)}[/]")
 
-        lines.append(f"[bold {AMBER}]⏱ {self.session_duration()}[/]")
+        if time.time() - self.session_start >= 1:
+            lines.append(f"[bold {AMBER}]⏱ {self.session_duration()}[/]")
 
         content = "\n".join(lines)
         self.console.print()

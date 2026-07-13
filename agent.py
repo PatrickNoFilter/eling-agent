@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -134,6 +135,7 @@ def run_tool_calls(
     plugin_callables: dict,
     mcp_manager: MCPManager,
     tui=None,
+    workspace_manager=None,
 ) -> list[dict]:
     """Execute all tool calls from one model turn concurrently."""
     if not tool_calls:
@@ -209,6 +211,7 @@ def learn_from_exchange(
     agent_output: str,
     skills_lib: SkillLibrary,
     tui=None,
+    workspace_manager=None,
 ):
     """
     Make one extra call to the model asking whether to learn a skill
@@ -264,6 +267,7 @@ def run_turn(
     mcp_manager: MCPManager,
     config: dict,
     tui=None,
+    workspace_manager=None,
     *,
     conversation_history: list | None = None,
 ) -> tuple[str, list]:
@@ -273,7 +277,7 @@ def run_turn(
     passed to the next turn for continuity.
     """
     history = list(conversation_history) if conversation_history else []
-    max_tool_rounds = min(config.get("max_tool_rounds", 15), 100)
+    max_tool_rounds = min(config.get("max_tool_rounds", 30), 100)
 
     # Retrieve relevant context
     skills_hits = skills_lib.relevant(user_input, k=3)
@@ -358,8 +362,8 @@ def run_turn(
 
     # If we still have no content or the last round ended on tool_calls,
     # make one final provider call asking for a summary
-    if not final_content or any(
-        m.get("tool_calls") for m in messages[-3:]
+    if not final_content or (
+        next((m for m in reversed(messages) if m["role"] == "assistant"), {}).get("tool_calls")
     ):
         if tui:
             tui.reasoning("⏰ Tool rounds exhausted — requesting summary from model...")
@@ -462,6 +466,7 @@ def main():
         tui = ElingTUI()
         tui.console.clear()
     else:
+        print("\033[2J\033[H", end="")
         tui = None
 
     # Count skills/memories for banner
@@ -519,7 +524,26 @@ def main():
 
                 if not user_input:
                     continue
-                if user_input.lower() in ("exit", "quit"):
+                if user_input.strip() == "/new":
+                    if tui:
+                        tui.console.clear()
+                    else:
+                        print("\033[2J\033[H", end="")
+                    new_dir = "/root/eling-workspce/auto-20260713_122221/eling-agents"
+                    os.makedirs(new_dir, exist_ok=True)
+                    cfg_dst = os.path.join(new_dir, "config.json")
+                    if not os.path.exists(cfg_dst) and os.path.exists("config.json"):
+                        shutil.copy2("config.json", cfg_dst)
+                    if tui:
+                        tui.console.print("[bold yellow]♻ Restarting in " + new_dir + "...[/]")
+                    mcp_manager.stop_all()
+                    memory_store.close()
+                    skills_lib.close()
+                    os.chdir(new_dir)
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                if user_input.lower() in ("exit", "quit", "/exit"):
+                    if tui:
+                        tui.console.print("[dim]Goodbye![/]")
                     break
 
                 if tui:
