@@ -1,0 +1,24 @@
+name: eling
+version: 0.1.0
+description: "Eling — unified second brain for AI agents. 5-layer memory with HRR facts, FTS5 KB, codegraph, and Notion bridge."
+author: PatrickNoFilter
+license: MIT
+homepage: https://github.com/PatrickNoFilter/eling
+
+# Hermes plugin entry: registers Brain class + 5 MCP tools
+entrypoint: eling.hermes_plugin:register
+
+# Optional: hooks for session lifecycle
+hooks:
+  - on_session_start
+  - on_session_end
+  - on_pre_user_message
+  - on_post_user_message
+  - on_pre_tool_use
+  - on_post_tool_use
+  - on_post_assistant_message
+  - on_compaction
+  - on_error_occurred
+  - on_decision_made
+  - on_file_edit
+  - on_idle_30min

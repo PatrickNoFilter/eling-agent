@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eling"
+version = "0.12.1"
+description = "Unified second brain for AI agents — 8-layer memory, Blackbox flight recorder, HRR reasoning, 73 MCP tools (5 servers), Obsidian vault, markdownify (PDF/DOCX/XLSX/PPTX/images/audio->MD), Continuum multi-agent hub, temporal queries, per-fact versioning, vector search, Zettelkasten linking, memory evolution, spec-kit verification, verify-on-stop"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = ["memory", "mcp", "ai-agent", "second-brain", "hrr", "orchestration", "continuum", "multi-agent"]
+authors = [
+    {name = "PatrickNoFilter"},
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "httpx>=0.27",
+    # numpy is optional — needed only for HRR.
+    # Install via: pip install eling[hrr] or pip install eling[dev]
+]
+
+[project.optional-dependencies]
+notion = ["httpx>=0.27"]
+hrr = ["numpy>=1.24"]
+embeddings = ["sentence-transformers>=3.0"]
+markdownify = ["markitdown[pdf]"]
+markdownify_all = ["markitdown[all]"]
+all = ["eling[hrr,embeddings,notion]"]
+dev = [
+    "eling[hrr]",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+eling-install-opencode = "eling.cli:_run_install_opencode_cli"
+eling-install-zero = "eling.cli:_run_install_zero_cli"
+eling-install-termux = "eling.cli:_run_install_termux_cli"
+eling-continuum = "eling.cli:_run_continuum_cli"
+eling-markdownify = "eling.markdownify.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+eling = ["opencode_plugin/*", "zero_plugin/*", "blackbox/*", "blackbox/adapters/*", "markdownify/*", "markdownify/markdownify.sh"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[project.urls]
+Homepage = "https://github.com/PatrickNoFilter/eling"
+Repository = "https://github.com/PatrickNoFilter/eling"
+Documentation = "https://github.com/PatrickNoFilter/eling#readme"
