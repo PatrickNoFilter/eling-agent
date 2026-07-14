@@ -712,6 +712,28 @@ class ElingTUI:
                 )
                 kb = KeyBindings()
 
+                # Paste burst detection for Termux char-by-char paste
+                _paste_last_time = [0.0]
+                _paste_burst = [0]
+                _is_termux = "TERMUX_VERSION" in os.environ
+
+                @kb.add("enter")
+                def _handle_enter(event):
+                    now = time.time()
+                    buf = event.current_buffer
+                    if _is_termux:
+                        gap = now - _paste_last_time[0]
+                        if gap < 0.1:
+                            _paste_burst[0] += 1
+                        else:
+                            _paste_burst[0] = 0
+                        _paste_last_time[0] = now
+                        if _paste_burst[0] > 2:
+                            buf.insert_text("\n")
+                            return
+                    _paste_burst[0] = 0
+                    buf.validate_and_handle()
+
                 @kb.add("c-c")
                 def _interrupt(event):
                     raise KeyboardInterrupt()
@@ -730,7 +752,6 @@ class ElingTUI:
                 })
 
                 self._pt_session = PromptSession(
-                    multiline=True,
                     history=FileHistory(history_path),
                     style=style,
                     key_bindings=kb,
