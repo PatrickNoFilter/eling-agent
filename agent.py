@@ -225,14 +225,14 @@ def learn_from_exchange(
         {
             "role": "system",
             "content": (
-                "You analyze conversations to extract reusable skills. "
-                "Given a user query and an assistant response, decide if "
-                "there is a generally useful skill or pattern that should "
-                "be saved for future reference.\n\n"
-                "Respond with STRICT JSON only (no markdown, no extra text):\n"
-                '{"learn": true/false, "name": "short-name", '
-                '"trigger": "phrase that triggers this skill", '
-                '"body": "instructions for the skill"}'
+                "You extract reusable skill patterns from conversations.\n\n"
+                "A skill is worth learning when the assistant solved a real problem — "
+                "wrote code, debugged, explained a technique, or performed multi-step work.\n\n"
+                "Examples:\n"
+                '- {"learn": true, "name": "live-elapsed-timer", "trigger": "add time counter", "body": "1) Record start time 2) Spawn daemon thread updating display every 0.5s 3) Show elapsed seconds 4) Join on exit"}\n'
+                '- {"learn": true, "name": "system-health-check", "trigger": "check system health", "body": "Run top -bn1, free -h, df -h, uptime to get system metrics"}\n\n'
+                "Respond STRICT JSON only. No markdown, no extra text.\n"
+                'If learn is false: {"learn": false}'
             ),
         },
         {
@@ -241,7 +241,7 @@ def learn_from_exchange(
         },
     ]
     try:
-        resp = provider.chat(messages, max_tokens=500, temperature=0.2)
+        resp = provider.chat(messages, max_tokens=500, temperature=0.3)
         content = resp.get("content", "")
         if not content:
             return
@@ -250,14 +250,26 @@ def learn_from_exchange(
         content = "\n".join(filtered).strip()
         data = json.loads(content)
         if data.get("learn") and data.get("name"):
+            name = data["name"].strip()
+            body = (data.get("body") or agent_output[:1000]).strip()
+            trigger = (data.get("trigger") or user_input[:200]).strip()
+            # Quality heuristic: require meaningful body content
+            if len(body) < 50:
+                log.debug("Skill '%s' body too short (%d chars), skipping", name, len(body))
+                return
+            # Quality heuristic: reject overly generic names
+            generic_names = {"fix", "debug", "help", "solve", "patch", "workaround"}
+            if name.lower() in generic_names:
+                log.debug("Skill name '%s' too generic, skipping", name)
+                return
             skills_lib.upsert(
-                name=data["name"],
-                trigger=data.get("trigger", user_input[:200]),
-                body=data.get("body", agent_output[:1000]),
+                name=name,
+                trigger=trigger,
+                body=body,
             )
-            log.info("Learned new skill: %s", data["name"])
+            log.info("Learned new skill: %s", name)
             if tui:
-                tui.learned_skill(data["name"])
+                tui.learned_skill(name)
     except Exception as exc:
         log.debug("Learn-from-exchange skipped: %s", exc)
 
@@ -453,6 +465,13 @@ def main():
                 pass
     memory_store = MemoryStore(_mem_path)
     skills_lib = SkillLibrary(config.get("skills_db", "agent_skills.db"))
+    # Prune unused skills older than 7 days on startup
+    try:
+        pruned = skills_lib.prune_unused(days=30)
+        if pruned:
+            log.info("Pruned %d unused skill(s) older than 7 days", pruned)
+    except Exception as exc:
+        log.debug("Skill prune skipped: %s", exc)
     plugin_callables, plugin_schemas = load_plugins()
 
     mcp_servers = {

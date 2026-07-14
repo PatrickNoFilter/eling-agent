@@ -122,6 +122,19 @@ class SkillLibrary:
             self._conn.commit()
             return cur.rowcount > 0
 
+    def prune_unused(self, days: int = 7) -> int:
+        """Delete skills with 0 uses older than N days. Returns count deleted."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM skills WHERE uses = 0 AND created_at < ?",
+                (cutoff,),
+            )
+            self._conn.commit()
+            self._conn.execute("VACUUM")
+        return cur.rowcount
+
     def count(self) -> int:
         """Return total number of skills (efficient COUNT)."""
         with self._lock:

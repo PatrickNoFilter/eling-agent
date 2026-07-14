@@ -730,6 +730,7 @@ class ElingTUI:
                 })
 
                 self._pt_session = PromptSession(
+                    multiline=True,
                     history=FileHistory(history_path),
                     style=style,
                     key_bindings=kb,
