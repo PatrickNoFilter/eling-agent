@@ -50,6 +50,10 @@ class MCPServerConnection:
         self._read_thread = threading.Thread(target=self._reader, daemon=True)
         self._read_thread.start()
 
+        # Start a stderr reader thread that logs server-side errors
+        self._stderr_thread = threading.Thread(target=self._stderr_reader, daemon=True)
+        self._stderr_thread.start()
+
         # Initialize handshake
         init_resp = self._send_request(
             "initialize",
@@ -96,6 +100,20 @@ class MCPServerConnection:
                 # Route response
                 if "id" in msg:
                     self._response_queue.put(msg)
+        except (ValueError, OSError):
+            pass
+
+    def _stderr_reader(self):
+        """Read stderr lines from the subprocess and log them as warnings."""
+        if not self._proc or not self._proc.stderr:
+            return
+        try:
+            for line in self._proc.stderr:
+                if self._closed:
+                    break
+                line = line.strip()
+                if line:
+                    log.warning("MCP '%s' stderr: %s", self.name, line[:500])
         except (ValueError, OSError):
             pass
 

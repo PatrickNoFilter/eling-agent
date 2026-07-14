@@ -24,6 +24,7 @@ from typing import Optional
 
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.syntax import Syntax
 from rich.console import Console
 from rich.rule import Rule
@@ -265,6 +266,7 @@ class ElingTUI:
 
         self.session_start = session_start if session_start is not None else time.time()
         self._turn_start = None
+        self._verbose_tool_output = True  # can be overridden via set_verbose()
 
         # Override Rich's default markdown colors (magenta defaults → blue)
         from rich.theme import Theme
@@ -514,7 +516,7 @@ class ElingTUI:
         """Print user input with a styled prompt and session timer."""
         ts = datetime.now().strftime("%H:%M:%S")
         dur = self.session_duration()
-        self.console.print(f"[dim {self.MUTEDBLUE}]{ts}[/]  [bold {self.ACCENT}]┃[/]  [{self.TEXT}]{text}[/]  [dim {self.MUTEDBLUE}]⏱ {dur}[/]")
+        self.console.print(f"[dim {self.MUTEDBLUE}]{ts}[/]  [bold {self.ACCENT}]┃[/]  [{self.TEXT}]{escape(text)}[/]  [dim {self.MUTEDBLUE}]⏱ {dur}[/]")
         self.console.print()
 
     # ── Assistant Response (spacious, single-border) ────────────────
@@ -575,15 +577,15 @@ class ElingTUI:
         if not text or not text.strip():
             return
         lines = text.strip().splitlines()
-        # Show up to 3 lines
-        display = "\n".join(lines[:3])
-        if len(lines) > 3:
-            display += f"\n  [{self.MUTEDBLUE}]... and {len(lines) - 3} more lines[/]"
-        if len(display) > 300:
-            display = display[:297] + "..."
+        # Show up to 30 lines
+        display = "\n".join(lines[:30])
+        if len(lines) > 30:
+            display += f"\n  [{self.MUTEDBLUE}]... and {len(lines) - 30} more lines[/]"
+        if len(display) > 3000:
+            display = display[:2997] + "..."
         self.console.print(
             Panel(
-                f"[{self.MUTEDBLUE}]{display}[/]",
+                f"[{self.MUTEDBLUE}]{escape(display)}[/]",
                 title=f"[bold {self.MIDBLUE}]🤔 Reasoning[/]",
                 box=box.ROUNDED,
                 border_style=self.LIGHTBLUE,
@@ -597,7 +599,7 @@ class ElingTUI:
     def tool_call(self, name: str, args_preview: str = "",
                   duration: float = 0, ok: bool = True,
                   _result: str = ""):
-        """Display a single tool execution in a spacious panel."""
+        """Display a single tool execution in a spacious panel with full output."""
         status = f"[{self.GREEN}]Success[/]" if ok else f"[{self.RED}]Failed[/]"
         dur_str = f"[{self.MUTEDBLUE}]{duration:.1f}s[/]" if duration else "[{self.MUTEDBLUE}]—[/]"
 
@@ -607,13 +609,15 @@ class ElingTUI:
         lines.append(f"  [{self.MUTEDBLUE}]  Result: {status}  ⏱ {dur_str}[/]")
 
         if _result:
-            preview = _result[:120] + "..." if len(_result) > 120 else _result
-            lines.append(f"  [{self.MUTEDBLUE}]  Output: {preview}[/]")
+            if not self._verbose_tool_output and len(_result) > 120:
+                _result = _result[:117] + "..."
+            # Show full output with syntax highlighting (or compact if verbose disabled)
+            lang = "python" if (_result.startswith(("import ", "def ", "class ", "print(", "for ", "if ", "return ", "from ")) and "\n" in _result) else "text"
+            lines.append(Syntax(_result, lang, theme="monokai", word_wrap=True))
 
-        content = "\n".join(lines)
         self.console.print(
             Panel(
-                content,
+                Group(*lines),
                 border_style=self.MIDBLUE,
                 padding=(1, 1),
                 box=box.ROUNDED,
@@ -621,7 +625,32 @@ class ElingTUI:
         )
         self.console.print()
 
-    # ── Tool Call Batch (spacious multi-call panel) ─────────────────
+    # ── Tool Start / End (thin wrappers for full-verbosity flow) ───
+
+    def set_verbose_tool_output(self, verbose: bool):
+        """Enable/disable full-verbosity tool output.
+
+        When disabled, long tool results are truncated to 120 characters
+        instead of rendered in full with syntax highlighting.
+        """
+        self._verbose_tool_output = verbose
+
+    def tool_start(self, name: str, args_preview: str = ""):
+        """Called before tool execution — lightweight one-liner with full command.
+
+        Prints the tool name and full argument preview immediately, so the user
+        sees what's being dispatched without waiting for the result panel.
+        """
+        self.console.print(f"  [{self.MIDBLUE}]▶ Running [bold {self.ACCENT}]{name}[/][/]")
+        if args_preview:
+            lang = "bash" if any(kw in name.lower() for kw in ("shell", "term", "bash", "exec")) else "text"
+            self.console.print(
+                Syntax(args_preview, lang, theme="monokai", word_wrap=True)
+            )
+
+    def tool_end(self, name: str, result: str = "", duration: float = 0, ok: bool = True):
+        """Called after tool execution — shows the full, untruncated output result."""
+        self.tool_call(name, duration=duration, ok=ok, _result=result)
 
     def tool_batch(self, results: list[dict]):
         """Display parallel tool results in a spacious multi-line panel."""
@@ -651,7 +680,7 @@ class ElingTUI:
 
     def context_hit(self, source: str, snippet: str, score: float):
         """Show a context retrieval hit with expanded detail."""
-        short = snippet[:120] + "..." if len(snippet) > 120 else snippet
+        short = snippet[:2000] + "..." if len(snippet) > 2000 else snippet
         color = self.GREEN if score > 0.5 else (self.MIDBLUE if score > 0.2 else self.MUTEDBLUE)
         self.console.print(
             f"  [{self.MUTEDBLUE}]┃ [{self.ACCENT}]⊞ {source}[/]  "

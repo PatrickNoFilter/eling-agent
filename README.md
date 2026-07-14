@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/github-PatrickNoFilter/eling--agent-8A2BE2)](https://github.com/PatrickNoFilter/eling-agent)
-[![Version](https://img.shields.io/badge/version-0.2.0-blueviolet)](https://github.com/PatrickNoFilter/eling-agent/releases)
+[![Version](https://img.shields.io/badge/version-0.2.3-blueviolet)](https://github.com/PatrickNoFilter/eling-agent/releases)
 
 *"Eling" (Javanese): to remember, to be conscious, to be aware*
 
@@ -27,6 +27,9 @@
 - **🎨 Rich TUI** — beautiful terminal UI with banner, thinking spinner, session uptime, 10 color themes
 - **🧩 Plugin system** — extend with Python plugins (shell, files, web)
 - **⏱ Session persistence** — tracks uptime, plan steps, tool timings
+- **🔍 Verbose tool output** — full code/result visibility in TUI, toggleable via config
+- **🧪 Auto-pytest** — automatically runs pytest on touched test files after each tool round
+- **🛡️ Graceful error handling** — retry on timeouts/connection errors, auto-fix lint, wall-clock timeout
 
 It uses the **OpenCode Zen API** for LLM inference — a free, fast API compatible with OpenAI's chat completions format.
 
@@ -173,6 +176,8 @@ eling-agent/
 | `zen_base_url` | `https://opencode.ai/zen/v1` | API endpoint |
 | `zen_model` | `deepseek-v4-flash-free` | Model to use |
 | `max_tool_rounds` | `6` | Max tool call iterations per turn |
+| `max_turn_duration` | `300` | Wall-clock timeout per turn (seconds) |
+| `verbose_tool_output` | `true` | Show full tool args/results in TUI |
 | `memory_db` | `agent_memory.db` | Memory database path |
 | `skills_db` | `agent_skills.db` | Skills database path |
 | `mcp_servers` | `{}` | MCP server configurations |

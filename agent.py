@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import requests
 import shutil
 import subprocess
 import sys
@@ -84,9 +85,21 @@ def build_system_prompt(
     return "\n".join(parts)
 
 
-# ── Auto Ruff —────────────────────────────────────────────────────────
+# ── Auto Ruff + Auto Pytest —──────────────────────────────────────────
 
 PY_FILE_RE = re.compile(r'(?:^|\s)(/[^\s]*\.py|[a-zA-Z0-9_./-]+\.py)')
+
+
+def _extract_py_files(tool_results: list[dict]) -> set[str]:
+    """Extract .py file paths from tool result content."""
+    files: set[str] = set()
+    for tr in tool_results:
+        text = tr.get("content", "")
+        for m in PY_FILE_RE.finditer(text):
+            candidate = m.group(1).rstrip(".,;:!?)'\"")
+            if os.path.isfile(candidate):
+                files.add(candidate)
+    return files
 
 
 def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
@@ -95,14 +108,7 @@ def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
     Called after each tool round — catches syntax/quality issues
     immediately after code is created or edited.
     """
-    files = set()
-    for tr in tool_results:
-        text = tr.get("content", "")
-        for m in PY_FILE_RE.finditer(text):
-            candidate = m.group(1).rstrip(".,;:!?)'\"")
-            if os.path.isfile(candidate):
-                files.add(candidate)
-
+    files = _extract_py_files(tool_results)
     if not files:
         return
 
@@ -120,21 +126,108 @@ def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
             if tui:
                 tui.console.print(f"  [bold {tui.GREEN}]✓ ruff[/]  [dim {tui.MUTEDBLUE}]clean[/]")
         else:
-            # Show first few lines of output
-            lines = result.stdout.strip().splitlines()
-            snippet = "\n".join(lines[:5])
-            if len(lines) > 5:
-                snippet += f"\n  [dim {tui.MUTEDBLUE}]... and {len(lines)-5} more[/]"
+            # Auto-fix with safe fixes
             if tui:
-                tui.console.print(f"  [bold {tui.RED}]✗ ruff[/]")
-                tui.console.print(snippet)
+                tui.console.print(f"  [dim {tui.MUTEDBLUE}]  ↻ ruff --fix ...[/]")
+            subprocess.run(
+                ["ruff", "check", *sorted(files), "--fix", "--quiet"],
+                capture_output=True, timeout=15,
+            )
+            # Re-check
+            recheck = subprocess.run(
+                ["ruff", "check", *sorted(files), "--output-format=concise"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if recheck.returncode == 0:
+                if tui:
+                    tui.console.print(f"  [bold {tui.GREEN}]✓ ruff[/]  [dim {tui.MUTEDBLUE}]fixed and clean[/]")
             else:
-                print(f"ruff: {len(lines)} issue(s)")
+                lines = recheck.stdout.strip().splitlines()
+                snippet = "\n".join(lines[:5])
+                if len(lines) > 5:
+                    snippet += f"\n  [dim {tui.MUTEDBLUE}]... and {len(lines)-5} more[/]"
+                if tui:
+                    tui.console.print(f"  [bold {tui.ORANGE}]⚠ ruff (unfixable)[/]")
+                    tui.console.print(snippet)
+                else:
+                    print(f"ruff: {len(lines)} issue(s) remaining")
     except FileNotFoundError:
         pass  # ruff not installed
     except subprocess.TimeoutExpired:
         if tui:
             tui.console.print(f"  [dim {tui.MUTEDBLUE}]⚠ ruff timed out[/]")
+
+
+def _auto_pytest(tool_results: list[dict], tui=None) -> str | None:
+    """Scan tool results for test files and auto-run pytest on them.
+
+    Runs after each tool round when the model creates or edits test files.
+    - If explicit test_*.py files are found, run pytest on those.
+    - If source files are modified, look for matching tests/test_<name>.py.
+    - Silently skips when no test files match (no noise).
+
+    Returns a markdown summary of failures (for the model to fix in the
+    next round) or None if all passed / nothing to run.
+    """
+    all_files = _extract_py_files(tool_results)
+    if not all_files:
+        return
+
+    test_targets: set[str] = set()
+
+    for f in all_files:
+        rel = os.path.relpath(f)
+        # Direct test file match
+        if "/test_" in rel or rel.startswith("test_") or "/tests/" in rel:
+            test_targets.add(f)
+        else:
+            # Source file → look for matching test
+            basename = os.path.splitext(os.path.basename(f))[0]
+            candidate = os.path.join(os.path.dirname(f), "tests", f"test_{basename}.py")
+            if os.path.isfile(candidate):
+                test_targets.add(candidate)
+            # Also check project-root tests/
+            root_test = os.path.join(
+                os.path.dirname(os.path.dirname(f)), "tests", f"test_{basename}.py"
+            )
+            if root_test != candidate and os.path.isfile(root_test):
+                test_targets.add(root_test)
+
+    if not test_targets:
+        return None
+
+    if tui:
+        labels = [os.path.relpath(t) for t in sorted(test_targets)]
+        tui.console.print(
+            f"  [dim {tui.MUTEDBLUE}]⏳ pytest {' '.join(labels)}[/]"
+        )
+
+    try:
+        result = subprocess.run(
+            ["python3", "-m", "pytest", *sorted(test_targets), "-x", "--tb=short"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            if tui:
+                last_line = (result.stdout.strip().splitlines() or ["all passed"])[-1]
+                tui.console.print(f"  [bold {tui.GREEN}]✓ pytest[/]  [dim {tui.MUTEDBLUE}]{last_line}[/]")
+            return None
+        else:
+            # Build a compact failure summary for the model
+            lines = result.stdout.strip().splitlines()
+            failure_lines = [l for l in lines if "FAILED" in l or "ERROR" in l or "assert" in l]
+            summary = "\n".join(failure_lines[-15:]) if failure_lines else result.stdout.strip()[:800]
+            if tui:
+                tui.console.print(f"  [bold {tui.RED}]✗ pytest[/]")
+                for l in (failure_lines or lines)[:5]:
+                    tui.console.print(f"  {l}")
+            return f"*Auto-pytest found failures:*\n```\n{summary}\n```\n*Fix the test(s) above and re-run.*"
+    except FileNotFoundError:
+        return None  # pytest not installed
+    except subprocess.TimeoutExpired:
+        if tui:
+            tui.console.print(f"  [dim {tui.MUTEDBLUE}]⚠ pytest timed out (120s)[/]")
+        return "*Auto-pytest timed out (120s).*"
 
 
 def run_tool_calls(
@@ -168,17 +261,17 @@ def run_tool_calls(
             if isinstance(arguments, dict):
                 items = []
                 for k, v in arguments.items():
-                    items.append(f"{k}={str(v)[:40]}")
+                    items.append(f"{k}={str(v)}")
                 args_preview = ", ".join(items)
             tui.tool_start(func_name, args_preview)
 
-        t0 = time.time()
+        start_time = time.monotonic()
+        ok = True
         if func_name in plugin_callables:
             try:
                 result = plugin_callables[func_name](**arguments)
                 if not isinstance(result, str):
                     result = json.dumps(result, ensure_ascii=False)
-                ok = True
             except Exception as exc:
                 result = f"(plugin error: {exc})"
                 ok = False
@@ -186,7 +279,6 @@ def run_tool_calls(
             try:
                 mcp_result = mcp_manager.call(func_name, arguments)
                 result = json.dumps(mcp_result, ensure_ascii=False, default=str)
-                ok = True
             except Exception as exc:
                 result = f"(mcp error: {exc})"
                 ok = False
@@ -194,9 +286,10 @@ def run_tool_calls(
             result = f"(unknown tool: {func_name})"
             ok = False
 
-        dur = time.time() - t0
+        duration = time.monotonic() - start_time
+
         if tui:
-            tui.tool_end(func_name, dur, ok, result=result)
+            tui.tool_end(func_name, result, duration, ok)
 
         return {
             "role": "tool",
@@ -297,6 +390,8 @@ def run_turn(
     """
     history = list(conversation_history) if conversation_history else []
     max_tool_rounds = config.get("max_tool_rounds", 200)
+    max_turn_duration = config.get("max_turn_duration", 300)  # wall-clock timeout (seconds)
+    _turn_start = time.monotonic()
 
     # Retrieve relevant context
     skills_hits = skills_lib.relevant(user_input, k=3)
@@ -325,12 +420,27 @@ def run_turn(
     final_content = ""
 
     for round_num in range(max_tool_rounds):
-        resp = provider.chat(
-            messages,
-            tools=all_tool_schemas if all_tool_schemas else None,
-            max_tokens=16384,
-            temperature=0.4,
-        )
+        # Wall-clock timeout check
+        elapsed = time.monotonic() - _turn_start
+        if elapsed > max_turn_duration:
+            if tui:
+                tui.console.print(f"  [{tui.MIDBLUE}]⏰ Turn timed out ({elapsed:.0f}s > {max_turn_duration}s)[/]")
+            break
+
+        try:
+            resp = provider.chat(
+                messages,
+                tools=all_tool_schemas if all_tool_schemas else None,
+                max_tokens=16384,
+                temperature=0.4,
+            )
+        except requests.exceptions.RequestException as exc:
+            error_msg = f"*Model request failed after retries: {exc}*"
+            if tui:
+                tui.console.print(f"  [bold {tui.RED}]✗ {error_msg}[/]")
+            # Final attempt: hand the error back as the response
+            final_content = error_msg
+            break
 
         content = resp.get("content") or ""
         tool_calls = resp.get("tool_calls")
@@ -357,8 +467,15 @@ def run_turn(
         tool_results = run_tool_calls(
             tool_calls, plugin_callables, mcp_manager, tui,
         )
-        messages.extend(tool_results)
         _auto_ruff_check(tool_results, tui)
+        pytest_fail = _auto_pytest(tool_results, tui)
+        if pytest_fail:
+            tool_results.append({
+                "role": "tool",
+                "content": pytest_fail,
+                "tool_call_id": "_auto_pytest",
+            })
+        messages.extend(tool_results)
 
     if not final_content and messages:
         for msg in reversed(messages):
@@ -468,13 +585,33 @@ def main():
                 pass
     memory_store = MemoryStore(_mem_path)
     skills_lib = SkillLibrary(config.get("skills_db", "agent_skills.db"))
-    # Prune unused skills older than 7 days on startup
+    # Prune stale skills on startup
     try:
         pruned = skills_lib.prune_unused(days=30)
         if pruned:
-            log.info("Pruned %d unused skill(s) older than 7 days", pruned)
+            log.info("Pruned %d unused skill(s) older than 30 days", pruned)
     except Exception as exc:
-        log.debug("Skill prune skipped: %s", exc)
+        log.debug("Skill prune (unused) skipped: %s", exc)
+    try:
+        low_pruned = skills_lib.prune_low_performer()
+        if low_pruned:
+            log.info("Pruned %d low-performing skill(s)", low_pruned)
+    except Exception as exc:
+        log.debug("Skill prune (low-performer) skipped: %s", exc)
+
+    # ── Memory pruning on startup ──────────────────────────────────
+    try:
+        dup_pruned = memory_store.prune_duplicates()
+        if dup_pruned:
+            log.info("Pruned %d duplicate memory entries", dup_pruned)
+    except Exception as exc:
+        log.debug("Duplicate pruning skipped: %s", exc)
+    try:
+        old_pruned = memory_store.prune_old(keep=1000)
+        if old_pruned:
+            log.info("Pruned %d old memory entries (keeping %d)", old_pruned, 1000)
+    except Exception as exc:
+        log.debug("Old-memory pruning skipped: %s", exc)
     plugin_callables, plugin_schemas = load_plugins()
 
     mcp_servers = {
@@ -486,6 +623,9 @@ def main():
     if not args.compact:
         from tui import ElingTUI
         tui = ElingTUI(session_start=_start_time, theme=config.get("theme"))
+        # Apply verbose_tool_output config
+        if not config.get("verbose_tool_output", True):
+            tui.set_verbose_tool_output(False)
         tui.console.clear()
     else:
         print("\033[2J\033[H", end="")

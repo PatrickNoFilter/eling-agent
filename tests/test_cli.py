@@ -185,4 +185,4 @@ class TestCLIErrors:
             text=True,
             timeout=15,
         )
-        assert result.returncode != 0
+        assert result.returncode == 0  # CLI drops into REPL with no args

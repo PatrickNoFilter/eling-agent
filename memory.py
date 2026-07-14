@@ -12,6 +12,12 @@ from typing import NamedTuple
 
 from textsim import top_k
 
+# Recency weight in relevance scoring
+# 0.0 = pure text similarity, 1.0 = pure recency
+RECENCY_ALPHA = 0.20
+# Half-life in days - recency score halves every N days
+RECENCY_HALF_DAYS = 7.0
+
 
 class MemoryEntry(NamedTuple):
     id: int
@@ -84,6 +90,63 @@ class MemoryStore:
             row = self._conn.execute("SELECT COUNT(*) AS cnt FROM memory").fetchone()
             return row["cnt"]
 
+    def prune_old(self, keep: int = 500) -> int:
+        """Delete all but the most recent `keep` entries. Returns count deleted."""
+        with self._lock:
+            total = self._conn.execute("SELECT COUNT(*) AS cnt FROM memory").fetchone()["cnt"]
+            if total <= keep:
+                return 0
+            cutoff_id = self._conn.execute(
+                "SELECT id FROM memory ORDER BY id DESC LIMIT 1 OFFSET ?",
+                (keep - 1,),
+            ).fetchone()
+            if cutoff_id is None:
+                return 0
+            cur = self._conn.execute(
+                "DELETE FROM memory WHERE id <= ?", (cutoff_id["id"],)
+            )
+            self._conn.commit()
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            return cur.rowcount
+
+    def prune_duplicates(self, threshold: float = 0.92) -> int:
+        """Merge near-duplicate memory entries using text similarity.
+
+        When two entries have text similarity above `threshold`, the older
+        one is deleted. Returns count deleted.
+        """
+        all_entries = self.all()
+        if len(all_entries) < 2:
+            return 0
+
+        def text_fn(e: MemoryEntry) -> str:
+            return f"{e.user_input} {e.agent_output}"
+
+        deleted = 0
+        with self._lock:
+            for i, entry in enumerate(all_entries):
+                # Compare against newer entries only (avoids double-deletion)
+                peers = all_entries[i + 1:]
+                if not peers:
+                    break
+                dups = top_k(
+                    text_fn(entry),
+                    peers,
+                    text_fn,
+                    k=1,
+                    min_score=threshold,
+                )
+                if dups:
+                    dup_entry, _score = dups[0]
+                    # Delete the older one
+                    older_id = min(entry.id, dup_entry.id)
+                    self._conn.execute("DELETE FROM memory WHERE id = ?", (older_id,))
+                    deleted += 1
+            if deleted:
+                self._conn.commit()
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return deleted
+
     def all(self) -> list[MemoryEntry]:
         """Return every memory entry."""
         with self._lock:
@@ -94,7 +157,7 @@ class MemoryStore:
         return [MemoryEntry(**dict(r)) for r in rows]
 
     def relevant(self, query: str, k: int = 5) -> list[tuple[MemoryEntry, float]]:
-        """Return top-k (MemoryEntry, score) via text similarity."""
+        """Return top-k (MemoryEntry, score) via text similarity + recency blend."""
         all_entries = self.all()
         if not all_entries:
             return []
@@ -102,8 +165,25 @@ class MemoryStore:
         def text_fn(e: MemoryEntry) -> str:
             return f"{e.user_input} {e.agent_output}"
 
-        results = top_k(query, all_entries, text_fn, k=k, min_score=0.05)
-        return results  # list of (MemoryEntry, float)
+        results = top_k(query, all_entries, text_fn, k=len(all_entries), min_score=0.0)
+        if not results:
+            return []
+
+        # Blend recency into scores
+        now = datetime.now(timezone.utc)
+        half_life_seconds = RECENCY_HALF_DAYS * 86400
+        blended = []
+        for entry, text_score in results:
+            try:
+                age = (now - datetime.fromisoformat(entry.timestamp)).total_seconds()
+            except (ValueError, TypeError):
+                age = 0.0
+            recency_score = 2.0 ** (-age / half_life_seconds) if age >= 0 else 1.0
+            blended_score = text_score * (1.0 - RECENCY_ALPHA) + recency_score * RECENCY_ALPHA
+            blended.append((entry, blended_score))
+
+        blended.sort(key=lambda x: x[1], reverse=True)
+        return blended[:k]
 
     def recent(self, n: int = 5) -> list[MemoryEntry]:
         """Return the last n entries in chronological order."""
