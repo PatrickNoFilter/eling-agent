@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import os
 import threading
+import itertools
 import time
 from datetime import datetime
 from typing import Optional
@@ -30,7 +31,6 @@ from rich.console import Console
 from rich.rule import Rule
 from rich import box
 from rich.console import Group
-from rich.status import Status
 from rich.style import Style as RichStyle
 
 # ── Formatting helpers ─────────────────────────────────────────────────
@@ -290,66 +290,56 @@ class ElingTUI:
             'markdown.table.header': RichStyle(bold=True, color=self.TEXT),
         }))
 
-    # ── Thinking animation ──────────────────────────────────────────
+    # ── Thinking indicator (scroll-safe heartbeat) ─────────────────
 
-    _thinking_notifications: list[str] = []
+    _thinking_start_time: float | None = None
 
     def working_info(self, message: str):
-        """Enqueue a notification to display under the working spinner.
+        """Print a progress line below the working header.
 
-        Call this during ``thinking()`` context to show progress updates
-        (tool calls, context hits, etc.) below the ``🤖 Working`` status.
+        Call this during ``thinking()`` context to show updates
+        (tool calls, context hits, etc.). Each call appends a new
+        line to the terminal so scrollback is preserved.
         """
-        self._thinking_notifications.append(message)
-
-    def _format_working_status(self) -> str:
-        """Build the status line with elapsed time + pending notifications."""
-        elapsed = format_time(time.time() - self._turn_start) if self._turn_start else "0s"
-        base = f"[bold {self.ACCENT}]🤖 Working[/]  [bold {self.MIDBLUE}]⏱ {elapsed}[/]"
-        if self._thinking_notifications:
-            note = self._thinking_notifications[-1]
-            if len(note) > 50:
-                note = note[:47] + "..."
-            base += f"  [dim {self.LIGHTBLUE}]┃ {note}[/]"
-        return base
+        elapsed = format_time(time.time() - self._thinking_start_time) if self._thinking_start_time else "0s"
+        self.console.print(f"  [{self.MUTEDBLUE}]┃ {message}  ⏱ {elapsed}[/]")
 
     @contextmanager
     def thinking(self, message: str = ""):
-        """Show an animated spinner while processing, with live elapsed counter.
+        """Show a working indicator with a scroll-safe heartbeat.
 
-        The elapsed time (since turn_start was called) counts up in real time.
-        Call ``working_info()`` within the context to show updates under the
-        spinner line.
+        Prints a ``🤖 Working…`` line at the start, then appends a
+        new heartbeat line every 3 seconds with an animated spinner
+        character and live elapsed time. Each line is a new terminal
+        line so scrollback is preserved. Ends with ``✅ Done``.
         """
         if self._turn_start is None:
             self._turn_start = time.time()
+        self._thinking_start_time = time.time()
 
-        self._thinking_notifications = []
         stop_event = threading.Event()
+        spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
 
-        def _updater(s):
-            while not stop_event.is_set():
-                s.update(self._format_working_status())
-                time.sleep(0.5)
+        def _heartbeat():
+            while not stop_event.wait(3):
+                elapsed = format_time(time.time() - self._thinking_start_time)
+                frame = next(spinner)
+                self.console.print(
+                    f"  [{self.MUTEDBLUE}]{frame} Working…  ⏱ {elapsed}[/]"
+                )
 
-        with Status(
-            self._format_working_status(),
-            console=self.console,
-            spinner="dots12",
-            spinner_style=RichStyle(color=self.ACCENT),
-        ) as s:
-            t = threading.Thread(target=_updater, args=(s,), daemon=True)
-            try:
-                t.start()
-            except RuntimeError:
-                pass
-            try:
-                yield s
-            finally:
-                stop_event.set()
-                if t.is_alive():
-                    t.join(timeout=1.0)
-                self._thinking_notifications = []
+        thread = threading.Thread(target=_heartbeat, daemon=True)
+        thread.start()
+
+        self.console.print(f"  [bold {self.ACCENT}]🤖 Working…[/]  [bold {self.MIDBLUE}]⏱ 0s[/]")
+        try:
+            yield
+        finally:
+            stop_event.set()
+            thread.join(timeout=1)
+            elapsed = format_time(time.time() - self._thinking_start_time)
+            self.console.print(f"  [{self.GREEN}]✅ Done[/]  [{self.MUTEDBLUE}]⏱ {elapsed}[/]")
+            self._thinking_start_time = None
 
     def session_duration(self) -> str:
         """Return human-readable session uptime."""
@@ -545,6 +535,7 @@ class ElingTUI:
                         lang = ""
                     renders.append(
                         Syntax(code, lang or "text", theme="monokai",
+                               background_color="default",
                                line_numbers=True, word_wrap=True)
                     )
                     renders.append("")
@@ -613,7 +604,7 @@ class ElingTUI:
                 _result = _result[:117] + "..."
             # Show full output with syntax highlighting (or compact if verbose disabled)
             lang = "python" if (_result.startswith(("import ", "def ", "class ", "print(", "for ", "if ", "return ", "from ")) and "\n" in _result) else "text"
-            lines.append(Syntax(_result, lang, theme="monokai", word_wrap=True))
+            lines.append(Syntax(_result, lang, theme="monokai", background_color="default", word_wrap=True))
 
         self.console.print(
             Panel(
@@ -645,7 +636,7 @@ class ElingTUI:
         if args_preview:
             lang = "bash" if any(kw in name.lower() for kw in ("shell", "term", "bash", "exec")) else "text"
             self.console.print(
-                Syntax(args_preview, lang, theme="monokai", word_wrap=True)
+                Syntax(args_preview, lang, theme="monokai", word_wrap=True, background_color="default")
             )
 
     def tool_end(self, name: str, result: str = "", duration: float = 0, ok: bool = True):

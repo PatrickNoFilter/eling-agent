@@ -147,7 +147,7 @@ def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
                 if len(lines) > 5:
                     snippet += f"\n  [dim {tui.MUTEDBLUE}]... and {len(lines)-5} more[/]"
                 if tui:
-                    tui.console.print(f"  [bold {tui.ORANGE}]⚠ ruff (unfixable)[/]")
+                    tui.console.print(f"  [bold {tui.RED}]⚠ ruff (unfixable)[/]")
                     tui.console.print(snippet)
                 else:
                     print(f"ruff: {len(lines)} issue(s) remaining")
@@ -215,12 +215,12 @@ def _auto_pytest(tool_results: list[dict], tui=None) -> str | None:
         else:
             # Build a compact failure summary for the model
             lines = result.stdout.strip().splitlines()
-            failure_lines = [l for l in lines if "FAILED" in l or "ERROR" in l or "assert" in l]
+            failure_lines = [line for line in lines if "FAILED" in line or "ERROR" in line or "assert" in line]
             summary = "\n".join(failure_lines[-15:]) if failure_lines else result.stdout.strip()[:800]
             if tui:
                 tui.console.print(f"  [bold {tui.RED}]✗ pytest[/]")
-                for l in (failure_lines or lines)[:5]:
-                    tui.console.print(f"  {l}")
+                for line in (failure_lines or lines)[:5]:
+                    tui.console.print(f"  {line}")
             return f"*Auto-pytest found failures:*\n```\n{summary}\n```\n*Fix the test(s) above and re-run.*"
     except FileNotFoundError:
         return None  # pytest not installed
@@ -626,9 +626,9 @@ def main():
         # Apply verbose_tool_output config
         if not config.get("verbose_tool_output", True):
             tui.set_verbose_tool_output(False)
-        tui.console.clear()
+        tui.clear_screen()
     else:
-        print("\033[2J\033[H", end="")
+        print("\033[3J\033[2J\033[H", end="")
         tui = None
 
     # Count skills/memories for banner
@@ -685,16 +685,21 @@ def main():
                     else:
                         user_input = input("\n> ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    print()
+                    if tui:
+                        tui.clear_screen()
+                        tui.console.print("[dim]Goodbye![/]")
+                    else:
+                        print("\033[3J\033[2J\033[H", end="")
+                        print("Goodbye!")
                     break
 
                 if not user_input:
                     continue
                 if user_input.strip() == "/new":
                     if tui:
-                        tui.console.clear()
+                        tui.clear_screen()
                     else:
-                        print("\033[2J\033[H", end="")
+                        print("\033[3J\033[2J\033[H", end="")
                     ts = time.strftime("%Y%m%d_%H%M%S")
                     new_dir = os.path.join(os.path.expanduser("~"), "eling-workspace", f"session-{ts}")
                     os.makedirs(new_dir, exist_ok=True)
@@ -712,7 +717,10 @@ def main():
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                 if user_input.lower() in ("exit", "quit", "/exit"):
                     if tui:
+                        tui.clear_screen()
                         tui.console.print("[dim]Goodbye![/]")
+                    else:
+                        print("\033[3J\033[2J\033[H", end="")
                     break
 
                 if tui:

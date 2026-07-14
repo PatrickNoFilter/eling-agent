@@ -5,6 +5,7 @@ No SDK dependency — pure Python with subprocess + threading.
 
 import json
 import logging
+import re
 import subprocess
 import threading
 from queue import Queue, Empty
@@ -104,16 +105,35 @@ class MCPServerConnection:
             pass
 
     def _stderr_reader(self):
-        """Read stderr lines from the subprocess and log them as warnings."""
+        """Read stderr lines from the subprocess and log them.
+
+        Buffer complete lines, filter decorative-only noise (box-drawing,
+        ASCII art banners), and emit meaningful content as grouped batches.
+        """
         if not self._proc or not self._proc.stderr:
             return
+        buffer: list[str] = []
+        _BOX = re.compile(r'[│─╭╰╮╯▀▄█▌▐░▒▓═║╔╗╚╝╠╣╦╩╬+\-*#\s]')
         try:
             for line in self._proc.stderr:
                 if self._closed:
                     break
-                line = line.strip()
-                if line:
-                    log.warning("MCP '%s' stderr: %s", self.name, line[:500])
+                raw = line.rstrip('\n\r')
+                if not raw:
+                    continue
+                # Skip purely decorative lines (>60% box-drawing / whitespace)
+                if _BOX and len(raw) > 3:
+                    decorative = len(_BOX.findall(raw))
+                    if decorative / max(len(raw), 1) > 0.6:
+                        continue
+                buffer.append(raw)
+                # Flush every 5 lines or when we hit a log line pattern
+                if len(buffer) >= 5 or any(kw in raw for kw in ('INFO', 'WARNING', 'ERROR', 'Starting')):
+                    text = '; '.join(buffer)
+                    log.warning("MCP '%s' stderr: %s", self.name, text[:1000])
+                    buffer.clear()
+            if buffer:
+                log.warning("MCP '%s' stderr: %s", self.name, '; '.join(buffer)[:1000])
         except (ValueError, OSError):
             pass
 
