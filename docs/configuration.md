@@ -13,3 +13,4 @@ See [config.example.json](../config.example.json) for the template.
 | `memory_db` | `agent_memory.db` | Memory database path |
 | `skills_db` | `agent_skills.db` | Skills database path |
 | `mcp_servers` | `{}` | MCP server configurations |
+| `theme` | `"cobalt"` | TUI color theme (blue, pink, green, yellow, red, white, ocean, twilight, pastel, cobalt) |

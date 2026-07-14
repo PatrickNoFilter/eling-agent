@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/github-PatrickNoFilter/eling--agent-8A2BE2)](https://github.com/PatrickNoFilter/eling-agent)
-[![Version](https://img.shields.io/badge/version-0.1.6-blueviolet)](https://github.com/PatrickNoFilter/eling-agent/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-blueviolet)](https://github.com/PatrickNoFilter/eling-agent/releases)
 
 *"Eling" (Javanese): to remember, to be conscious, to be aware*
 
@@ -24,7 +24,7 @@
 - **📦 Workspace Manager** — copy-on-write file editing with automatic project root detection
 - **⏱ Live elapsed timer** — real-time thinking spinner with elapsed time counter
 - **🔧 MCP tools** — connect any MCP server (web search, filesystem, firecrawl, etc.)
-- **🎨 Rich TUI** — beautiful terminal UI with banner, thinking spinner, session uptime
+- **🎨 Rich TUI** — beautiful terminal UI with banner, thinking spinner, session uptime, 10 color themes
 - **🧩 Plugin system** — extend with Python plugins (shell, files, web)
 - **⏱ Session persistence** — tracks uptime, plan steps, tool timings
 
@@ -66,6 +66,14 @@ python3 agent.py --compact
 
 Get a free API key at [opencode.ai/zen](https://opencode.ai/zen) and set it in `config.json`:
 
+Or run the interactive setup wizard:
+
+```bash
+python3 agent.py --setup
+```
+
+This lets you configure the provider, API key, model, agent mode, and **color theme** (10 palettes to choose from).
+
 ```json
 {
   "zen_api_key": "sk-zen-your-key-here",
@@ -82,6 +90,7 @@ Get a free API key at [opencode.ai/zen](https://opencode.ai/zen) and set it in `
 | `python3 agent.py` | Launch interactive REPL with TUI |
 | `python3 agent.py "query"` | One-shot mode |
 | `python3 agent.py --compact` | Compact mode (minimal output) |
+| `python3 agent.py --setup` | Interactive setup wizard (provider, theme) |
 | `exit` / `quit` | Exit the REPL |
 
 ---
@@ -135,19 +144,20 @@ Eling Agent learns from every exchange:
 ```
 eling-agent/
 ├── agent.py              # Main entry point — REPL loop, tool orchestration
-├── tui.py                # Terminal UI — banner, spinner, plan panel, markdown
+├── tui.py                # Terminal UI — banner, spinner, plan panel, markdown, themes
 ├── provider.py           # ZenProvider — OpenAI-compatible API client
-├── mcp_client.py         # MCP client — stdio-based server manager
-├── memory.py             # MemoryStore — BM25 + cosine similarity retrieval
+├── mcp_client.py         # MCP client — stdio-based server manager (env support)
+├── memory.py             # MemoryStore — BM25 + cosine similarity retrieval, dedup
 ├── skills.py             # SkillLibrary — auto-learned skill storage
 ├── textsim.py            # Text utilities — tokenizer, similarity
 ├── workspace_manager.py  # Copy-on-write file editing with project detection
+├── src/eling/cli.py      # Interactive setup wizard (provider, theme)
 ├── plugins/
 │   ├── __init__.py       # Plugin loader
 │   └── shell_plugin.py   # Shell command execution
 ├── config.example.json   # Template configuration
 ├── requirements.txt      # Python dependencies
-├── pyproject.toml        # Package metadata
+├── pyproject.toml        # Package metadata (elin 0.2.0)
 ├── CREDITS.md            # Credits and acknowledgements
 ├── CREDITS.library.md    # Library-level credits
 └── LICENSE               # MIT license
@@ -166,6 +176,7 @@ eling-agent/
 | `memory_db` | `agent_memory.db` | Memory database path |
 | `skills_db` | `agent_skills.db` | Skills database path |
 | `mcp_servers` | `{}` | MCP server configurations |
+| `theme` | `"cobalt"` | Color theme for TUI (blue, pink, green, yellow, red, white, ocean, twilight, pastel, cobalt) |
 
 ---
 
