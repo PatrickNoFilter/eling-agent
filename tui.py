@@ -24,10 +24,13 @@ from typing import Optional
 
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.syntax import Syntax
 from rich.console import Console
-from rich.text import Text
 from rich.rule import Rule
 from rich import box
+from rich.console import Group
+from rich.status import Status
+from rich.style import Style as RichStyle
 
 # ── Formatting helpers ─────────────────────────────────────────────────
 
@@ -70,16 +73,134 @@ def _get_version() -> str:
 
 VERSION = _get_version()
 
-# ── Color palette (steel-blue sequential: eff3ff → 08519c) ───────────
-ACCENT = "#3182bd"      # dark blue — headers, highlights
-AMBER = "#6baed6"        # medium blue — secondary highlights
-BRONZE = "#9ecae1"       # medium-light blue — borders, tertiary
-TEXT = "#eff3ff"         # lightest blue — body text (good contrast on dark bg)
-DIM = "#c6dbef"          # light blue — muted text, timestamps
-GREEN = "#50C878"        # success / completed
-RED = "#FF6B6B"          # error / failed
-CYAN = "#08519c"         # darkest blue — info / in-progress
-PLAN_BORDER = "#6baed6"  # medium blue — session border
+# ── Color palette system ────────────────────────────────────────────
+# Design master:   more important UI = lighter / higher-contrast color
+#   DEEPBLUE  → lowest  importance (footers, muted backgrounds)
+#   MUTEDBLUE → low     importance (timestamps, metadata)
+#   LIGHTBLUE → medium  importance (borders, tertiary accents)
+#   MIDBLUE   → high    importance (secondary highlights, progress)
+#   ACCENT    → highest importance (headers, key highlights, model name)
+#   TEXT      → body copy (always lightest for readability)
+# Each theme maps its color family across the 5-tier importance scale.
+THEMES: dict[str, dict[str, str]] = {
+    "blue": {
+        "ACCENT": "#60a5fa",
+        "MIDBLUE": "#3b82f6",
+        "LIGHTBLUE": "#93c5fd",
+        "MUTEDBLUE": "#bfdbfe",
+        "DEEPBLUE": "#1e3a5f",
+        "TEXT": "#f0f9ff",
+        "GREEN": "#22c55e",
+        "RED": "#ef4444",
+    },
+    "pink": {
+        "ACCENT": "#ff89a3",
+        "MIDBLUE": "#ff69b4",
+        "LIGHTBLUE": "#ffb6c1",
+        "MUTEDBLUE": "#ffc0cb",
+        "DEEPBLUE": "#6b2142",
+        "TEXT": "#fff5f7",
+        "GREEN": "#7dcea0",
+        "RED": "#e74c6f",
+    },
+    "green": {
+        "ACCENT": "#6ee7b7",
+        "MIDBLUE": "#34d399",
+        "LIGHTBLUE": "#a7f3d0",
+        "MUTEDBLUE": "#d1fae5",
+        "DEEPBLUE": "#1a3a2a",
+        "TEXT": "#f0fdf4",
+        "GREEN": "#6ee7b7",
+        "RED": "#fca5a5",
+    },
+    "yellow": {
+        "ACCENT": "#fde047",
+        "MIDBLUE": "#facc15",
+        "LIGHTBLUE": "#fef08a",
+        "MUTEDBLUE": "#fef9c3",
+        "DEEPBLUE": "#5c4a00",
+        "TEXT": "#fffef5",
+        "GREEN": "#86efac",
+        "RED": "#f87171",
+    },
+    "red": {
+        "ACCENT": "#f87171",
+        "MIDBLUE": "#ef4444",
+        "LIGHTBLUE": "#fca5a5",
+        "MUTEDBLUE": "#fecaca",
+        "DEEPBLUE": "#5c1515",
+        "TEXT": "#fff5f5",
+        "GREEN": "#6ee7b7",
+        "RED": "#f87171",
+    },
+    "white": {
+        "ACCENT": "#e2e8f0",
+        "MIDBLUE": "#cbd5e1",
+        "LIGHTBLUE": "#f1f5f9",
+        "MUTEDBLUE": "#f8fafc",
+        "DEEPBLUE": "#334155",
+        "TEXT": "#f8fafc",
+        "GREEN": "#86efac",
+        "RED": "#fca5a5",
+    },
+    "ocean": {
+        "ACCENT": "#22d3ee",
+        "MIDBLUE": "#06b6d4",
+        "LIGHTBLUE": "#67e8f9",
+        "MUTEDBLUE": "#a5f3fc",
+        "DEEPBLUE": "#083344",
+        "TEXT": "#f0f9ff",
+        "GREEN": "#2a9d8f",
+        "RED": "#e76f51",
+    },
+    "twilight": {
+        "ACCENT": "#a78bfa",
+        "MIDBLUE": "#8b5cf6",
+        "LIGHTBLUE": "#c4b5fd",
+        "MUTEDBLUE": "#ddd6fe",
+        "DEEPBLUE": "#2e1065",
+        "TEXT": "#f5f3ff",
+        "GREEN": "#86efac",
+        "RED": "#fca5a5",
+    },
+    "pastel": {
+        "ACCENT": "#b8c0ff",
+        "MIDBLUE": "#c8b6ff",
+        "LIGHTBLUE": "#e2d5ff",
+        "MUTEDBLUE": "#f0eaff",
+        "DEEPBLUE": "#5b4a7a",
+        "TEXT": "#faf5ff",
+        "GREEN": "#a3c9b7",
+        "RED": "#e2a6a6",
+    },
+    "cobalt": {
+        "ACCENT": "#93c5fd",
+        "MIDBLUE": "#60a5fa",
+        "LIGHTBLUE": "#bfdbfe",
+        "MUTEDBLUE": "#dbeafe",
+        "DEEPBLUE": "#1e3a5f",
+        "TEXT": "#f0f9ff",
+        "GREEN": "#22c55e",
+        "RED": "#ef4444",
+    },
+}
+
+DEFAULT_THEME = "cobalt"
+
+# Resolve a theme by name, falling back to default on unknown names.
+def _resolve_theme(name: str | None) -> dict[str, str]:
+    return THEMES.get(name or DEFAULT_THEME, THEMES[DEFAULT_THEME])
+
+# Module-level convenience references (used by code that imports tui.ACCENT etc.)
+_ACTIVE_THEME = _resolve_theme(DEFAULT_THEME)
+ACCENT = _ACTIVE_THEME["ACCENT"]
+MIDBLUE = _ACTIVE_THEME["MIDBLUE"]
+LIGHTBLUE = _ACTIVE_THEME["LIGHTBLUE"]
+MUTEDBLUE = _ACTIVE_THEME["MUTEDBLUE"]
+DEEPBLUE = _ACTIVE_THEME["DEEPBLUE"]
+TEXT = _ACTIVE_THEME["TEXT"]
+GREEN = _ACTIVE_THEME["GREEN"]
+RED = _ACTIVE_THEME["RED"]
 
 # ── Status icons ─────────────────────────────────────────────────────
 ICON_PENDING = "○"
@@ -101,7 +222,8 @@ BANNER = [
 class ElingTUI:
     """Eling's terminal display — Rich-powered REPL with plan panel."""
 
-    def __init__(self, compact: bool = False, session_start: float | None = None):
+    def __init__(self, compact: bool = False, session_start: float | None = None,
+                 theme: str | None = None):
         self.console = Console()
         self.compact = compact
         self._plan_steps: list[dict] = []
@@ -109,21 +231,41 @@ class ElingTUI:
         self._step_started: dict[int, float] = {}
         self._step_completed: dict[int, float] = {}
         self._interactive = False
-        self.DIM = DIM
-        self.ACCENT = ACCENT
+
+        # Resolve theme
+        pal = _resolve_theme(theme)
+        self.MUTEDBLUE = pal["MUTEDBLUE"]
+        self.ACCENT = pal["ACCENT"]
+        self.GREEN = pal["GREEN"]
+        self.RED = pal["RED"]
+        self.MIDBLUE = pal["MIDBLUE"]
+        self.LIGHTBLUE = pal["LIGHTBLUE"]
+        self.DEEPBLUE = pal["DEEPBLUE"]
+        self.TEXT = pal["TEXT"]
+
         self.session_start = session_start if session_start is not None else time.time()
         self._turn_start = None
 
-        # Override Rich's default markdown heading colors (magenta → green)
+        # Override Rich's default markdown colors (magenta defaults → blue)
         from rich.theme import Theme
-        from rich.style import Style as RichStyle
         self.console.push_theme(Theme({
-            'markdown.h1': RichStyle(bold=True, color="#90E0EF"),
-            'markdown.h2': RichStyle(underline=True, color="#90E0EF"),
-            'markdown.h3': RichStyle(bold=True, color="#90E0EF"),
-            'markdown.h4': RichStyle(italic=True, color="#90E0EF"),
-            'markdown.h5': RichStyle(italic=True, color="#90E0EF"),
-            'markdown.h6': RichStyle(dim=True, color="#90E0EF"),
+            'markdown.h1': RichStyle(bold=True, color=self.LIGHTBLUE),
+            'markdown.h2': RichStyle(underline=True, color=self.LIGHTBLUE),
+            'markdown.h3': RichStyle(bold=True, color=self.LIGHTBLUE),
+            'markdown.h4': RichStyle(italic=True, color=self.LIGHTBLUE),
+            'markdown.h5': RichStyle(italic=True, color=self.LIGHTBLUE),
+            'markdown.h6': RichStyle(dim=True, color=self.LIGHTBLUE),
+            'markdown.code': RichStyle(color=self.MIDBLUE),
+            'markdown.code_block': RichStyle(color=self.MIDBLUE),
+            'markdown.list': RichStyle(color=self.LIGHTBLUE),
+            'markdown.link': RichStyle(color=self.LIGHTBLUE),
+            'markdown.link_url': RichStyle(color=self.LIGHTBLUE),
+            'markdown.strong': RichStyle(color=self.TEXT),
+            'markdown.emphasis': RichStyle(italic=True, color=self.LIGHTBLUE),
+            'markdown.text': RichStyle(color=self.TEXT),
+            'markdown.paragraph': RichStyle(color=self.TEXT),
+            'markdown.table.border': RichStyle(color=self.LIGHTBLUE),
+            'markdown.table.header': RichStyle(bold=True, color=self.TEXT),
         }))
 
     # ── Thinking animation ──────────────────────────────────────────
@@ -141,12 +283,12 @@ class ElingTUI:
     def _format_working_status(self) -> str:
         """Build the status line with elapsed time + pending notifications."""
         elapsed = format_time(time.time() - self._turn_start) if self._turn_start else "0s"
-        base = f"[bold {ACCENT}]🤖 Working[/]  [bold {AMBER}]⏱ {elapsed}[/]"
+        base = f"[bold {self.ACCENT}]🤖 Working[/]  [bold {self.MIDBLUE}]⏱ {elapsed}[/]"
         if self._thinking_notifications:
             note = self._thinking_notifications[-1]
             if len(note) > 50:
                 note = note[:47] + "..."
-            base += f"  [dim {DIM}]┃ {note}[/]"
+            base += f"  [dim {self.LIGHTBLUE}]┃ {note}[/]"
         return base
 
     @contextmanager
@@ -157,7 +299,6 @@ class ElingTUI:
         Call ``working_info()`` within the context to show updates under the
         spinner line.
         """
-        # Ensure turn timer is running
         if self._turn_start is None:
             self._turn_start = time.time()
 
@@ -165,14 +306,15 @@ class ElingTUI:
         stop_event = threading.Event()
 
         def _updater(s):
-            """Background thread: update status message with live elapsed."""
             while not stop_event.is_set():
                 s.update(self._format_working_status())
                 time.sleep(0.5)
 
-        with self.console.status(
+        with Status(
             self._format_working_status(),
-            spinner="dots12"
+            console=self.console,
+            spinner="dots12",
+            spinner_style=RichStyle(color=self.ACCENT),
         ) as s:
             t = threading.Thread(target=_updater, args=(s,), daemon=True)
             try:
@@ -207,35 +349,37 @@ class ElingTUI:
         plugins: int = 0,
         mcp: int = 0,
         model: str = "",
+        theme: str = "",
     ):
         """Print startup banner with logo on top, features below."""
         lines = list(BANNER)  # ELING wordmark
-        lines.append(f"[dim {DIM}]Eling v{VERSION} — Auto-Learning Agent[/]")
+        lines.append(f"[dim {self.MUTEDBLUE}]Eling v{VERSION} — Auto-Learning Agent[/]")
         lines.append("")
 
         stats = []
         if plugins:
-            stats.append(f"[{TEXT}]{plugins} plugins[/]")
+            stats.append(f"[{self.TEXT}]{plugins} plugins[/]")
         if mcp:
-            stats.append(f"[{TEXT}]{mcp} MCP servers[/]")
+            stats.append(f"[{self.TEXT}]{mcp} MCP servers[/]")
         if skills:
-            stats.append(f"[{TEXT}]{skills} skills[/]")
+            stats.append(f"[{self.TEXT}]{skills} skills[/]")
         if memories:
-            stats.append(f"[{TEXT}]{memories} memories[/]")
+            stats.append(f"[{self.TEXT}]{memories} memories[/]")
         if model:
             short = model.split("/")[-1] if "/" in model else model
-            # Prettify: deepseek-v4-flash-free → DeepSeek V4 Flash Free
             pretty = short.replace("-", " ").title()
-            lines.append(f"[bold {ACCENT}]🤖 {pretty}[/]")
+            lines.append(f"[bold {self.ACCENT}]🤖 {pretty}[/]")
         if stats:
-            lines.append(f"[dim {DIM}]{' · '.join(stats)}[/]")
+            lines.append(f"[dim {self.MUTEDBLUE}]{' · '.join(stats)}[/]")
+        if theme:
+            lines.append(f"[dim {self.LIGHTBLUE}]🎨 {theme}[/]")
 
-        lines.append(f"[bold {AMBER}]⏱ Startup time: {self.session_duration()}[/]")
+        lines.append(f"[bold {self.MIDBLUE}]⏱ Startup time: {self.session_duration()}[/]")
 
         content = "\n".join(lines)
         self.console.print()
         self.console.print(
-            Panel(content, box=box.ROUNDED, border_style=BRONZE, padding=(1, 2))
+            Panel(content, box=box.ROUNDED, border_style=self.LIGHTBLUE, padding=(1, 2))
         )
         self.console.print()
 
@@ -292,33 +436,30 @@ class ElingTUI:
         done = sum(1 for s in steps if s["status"] in ("completed", "failed"))
         pct = done / total if total else 0
 
-        # Header
-        header = Text()
-        header.append("  📋 Plan  ", style=f"bold {ACCENT}")
-        header.append(f"·  Step {done}/{total}  ", style=DIM)
-        # Progress bar (simple ASCII)
+        # Steps
         bar_width = 20
         filled = int(bar_width * pct)
-        bar = "█" * filled + "░" * (bar_width - filled)
-        header.append(f"[{BRONZE}]{bar}[/]  ", style=DIM)
-
-        # Steps
         lines = [""]
+        lines.append(
+            f"  [bold {self.ACCENT}]📋 Plan[/]  "
+            f"[{self.MUTEDBLUE}]·  Step {done}/{total}[/]  "
+            f"[{self.LIGHTBLUE}]{'█' * filled}{'░' * (bar_width - filled)}[/]"
+        )
         for i, s in enumerate(steps):
             icon = {
-                "pending": f"[{DIM}]{ICON_PENDING}[/]",
-                "in_progress": f"[{CYAN}]{ICON_IN_PROGRESS}[/]",
-                "completed": f"[{GREEN}]{ICON_COMPLETED}[/]",
-                "failed": f"[{RED}]{ICON_FAILED}[/]",
+                "pending": f"[{self.MUTEDBLUE}]{ICON_PENDING}[/]",
+                "in_progress": f"[{self.DEEPBLUE}]{ICON_IN_PROGRESS}[/]",
+                "completed": f"[{self.GREEN}]{ICON_COMPLETED}[/]",
+                "failed": f"[{self.RED}]{ICON_FAILED}[/]",
             }.get(s["status"], ICON_PENDING)
 
             elapsed = ""
             if s["started"] and s["status"] == "in_progress":
                 dur = time.time() - s["started"]
-                elapsed = f"  [{DIM}]{dur:.1f}s[/]"
+                elapsed = f"  [{self.MUTEDBLUE}]{dur:.1f}s[/]"
             elif s["started"] and s["completed"]:
                 dur = s["completed"] - s["started"]
-                elapsed = f"  [{DIM}]{dur:.1f}s[/]"
+                elapsed = f"  [{self.MUTEDBLUE}]{dur:.1f}s[/]"
 
             content = s["content"]
             if len(content) > 60:
@@ -326,16 +467,16 @@ class ElingTUI:
 
             note = ""
             if s["notes"]:
-                note = f"\n    [{DIM}]↳ {s['notes']}[/]"
+                note = f"\n    [{self.MUTEDBLUE}]↳ {s['notes']}[/]"
 
-            lines.append(f"    {icon}  [{TEXT}]{content}[/]{elapsed}{note}")
+            lines.append(f"    {icon}  [{self.TEXT}]{content}[/]{elapsed}{note}")
 
         panel_content = "\n".join(lines)
         self.console.print(
             Panel(
                 panel_content,
                 box=box.SQUARE,
-                border_style=DIM,
+                border_style=self.MUTEDBLUE,
                 padding=(0, 1),
             )
         )
@@ -353,97 +494,159 @@ class ElingTUI:
         """Print user input with a styled prompt and session timer."""
         ts = datetime.now().strftime("%H:%M:%S")
         dur = self.session_duration()
-        self.console.print(f"[dim {DIM}]{ts}[/]  [bold {ACCENT}]┃[/]  [{TEXT}]{text}[/]  [dim {DIM}]⏱ {dur}[/]")
+        self.console.print(f"[dim {self.MUTEDBLUE}]{ts}[/]  [bold {self.ACCENT}]┃[/]  [{self.TEXT}]{text}[/]  [dim {self.MUTEDBLUE}]⏱ {dur}[/]")
         self.console.print()
 
-    # ── Assistant Response (Hermes-style — Panel with Markdown) ───────
+    # ── Assistant Response (spacious, single-border) ────────────────
 
     def assistant(self, content: str):
-        """Render assistant response in a panel with Markdown formatting and session timer."""
+        """Render assistant response — code-aware with single blue border."""
         ts = datetime.now().strftime("%H:%M:%S")
         dur = self.session_duration()
-        md = Markdown(content, code_theme="monokai")
+
+        has_code = "```" in content
+
+        if has_code:
+            parts = content.split("```")
+            renders = []
+            for i, part in enumerate(parts):
+                if i % 2 == 0:
+                    if part.strip():
+                        renders.append(Markdown(part.strip()))
+                        renders.append("")
+                else:
+                    lines = part.split("\n", 1)
+                    lang = lines[0].strip() if lines else ""
+                    code = lines[1] if len(lines) > 1 else ""
+                    if not code.strip():
+                        code = lang
+                        lang = ""
+                    renders.append(
+                        Syntax(code, lang or "text", theme="monokai",
+                               line_numbers=True, word_wrap=True)
+                    )
+                    renders.append("")
+            # Remove trailing empty string if content ends with code
+            if renders and renders[-1] == "":
+                renders.pop()
+            body = Group(*renders)
+            body = Group(*renders)
+            title_str = "[bold white]Eling[/]"
+        else:
+            body = Markdown(content)
+            title_str = "[bold white]Eling[/]"
+
         self.console.print(
             Panel(
-                md,
-                title=f"[bold {ACCENT}]Eling[/]",
-                subtitle=f"[dim {DIM}]{ts}  ⏱ {dur}[/]",
+                body,
+                title=title_str,
+                subtitle=f"[dim {self.LIGHTBLUE}]{ts}  ⏱ {dur}[/]",
                 box=box.ROUNDED,
-                border_style=BRONZE,
+                border_style=self.LIGHTBLUE,
                 padding=(1, 2),
             )
         )
         self.console.print()
 
-    # ── Reasoning (compact, dim — shows model's chain-of-thought) ─────
+    # ── Reasoning (expanded, spacious) ──────────────────────────────
 
     def reasoning(self, text: str):
-        """Display model reasoning in a compact dim panel."""
+        """Display model reasoning in a spacious panel with more context."""
         if not text or not text.strip():
             return
         lines = text.strip().splitlines()
-        # Trim to first 8 lines for compactness
-        if len(lines) > 8:
-            lines = lines[:8] + [f"[dim {DIM}]... ({len(lines)-8} more lines)[/]"]
+        # Show up to 3 lines
+        display = "\n".join(lines[:3])
+        if len(lines) > 3:
+            display += f"\n  [{self.MUTEDBLUE}]... and {len(lines) - 3} more lines[/]"
+        if len(display) > 300:
+            display = display[:297] + "..."
+        self.console.print(
+            Panel(
+                f"[{self.MUTEDBLUE}]{display}[/]",
+                title=f"[bold {self.MIDBLUE}]🤔 Reasoning[/]",
+                box=box.ROUNDED,
+                border_style=self.LIGHTBLUE,
+                padding=(1, 1),
+            )
+        )
+        self.console.print()
+
+    # ── Tool Call (verbose, spacious) ───────────────────────────────
+
+    def tool_call(self, name: str, args_preview: str = "",
+                  duration: float = 0, ok: bool = True,
+                  _result: str = ""):
+        """Display a single tool execution in a spacious panel."""
+        status = f"[{self.GREEN}]Success[/]" if ok else f"[{self.RED}]Failed[/]"
+        dur_str = f"[{self.MUTEDBLUE}]{duration:.1f}s[/]" if duration else "[{self.MUTEDBLUE}]—[/]"
+
+        lines = [f"  [{self.TEXT}]⚙ Tool: [bold {self.ACCENT}]{name}[/][/]"]
+        if args_preview:
+            lines.append(f"  [{self.MUTEDBLUE}]  Args: {args_preview}[/]")
+        lines.append(f"  [{self.MUTEDBLUE}]  Result: {status}  ⏱ {dur_str}[/]")
+
+        if _result:
+            preview = _result[:120] + "..." if len(_result) > 120 else _result
+            lines.append(f"  [{self.MUTEDBLUE}]  Output: {preview}[/]")
+
         content = "\n".join(lines)
-        first = lines[0][:60] if lines else ""
-        self.working_info(f"🤔 {first}")
         self.console.print(
             Panel(
                 content,
-                title=f"[dim {DIM}]🤔 reasoning[/]",
-                box=box.SQUARE,
-                border_style=DIM,
-                padding=(0, 1),
+                border_style=self.MIDBLUE,
+                padding=(1, 1),
+                box=box.ROUNDED,
             )
         )
+        self.console.print()
 
-    # ── Tool Call (Hermes-style, compact) ─────────────────────────────
-
-    def tool_call(self, name: str, args_preview: str = "",
-                  duration: float = 0, ok: bool = True):
-        """Display a single tool execution result."""
-        icon = f"[{GREEN}]✓[/]" if ok else f"[{RED}]✗[/]"
-        dur_str = f"  [{DIM}]{duration:.1f}s[/]" if duration else ""
-        arg_str = f" [{DIM}]({args_preview})[/]" if args_preview else ""
-        self.console.print(
-            f"  {icon}  [{TEXT}]⚙ {name}[/]{arg_str}{dur_str}"
-        )
-        self.working_info(f"⚙ {name} {args_preview}")
-
-    # ── Tool Call Batch (compact view of multiple parallel calls) ─────
+    # ── Tool Call Batch (spacious multi-call panel) ─────────────────
 
     def tool_batch(self, results: list[dict]):
-        """Display a set of parallel tool results compactly."""
-        lines = []
+        """Display parallel tool results in a spacious multi-line panel."""
+        items = []
         for r in results:
             name = r.get("name", "?")
             dur = r.get("duration", 0)
             ok = r.get("ok", True)
-            icon = f"[{GREEN}]✓[/]" if ok else f"[{RED}]✗[/]"
-            dur_str = f"[{DIM}]{dur:.1f}s[/]" if dur else ""
-            lines.append(f"  {icon}  [{TEXT}]{name}[/]  {dur_str}")
+            icon = f"[{self.GREEN}]✓[/]" if ok else f"[{self.RED}]✗[/]"
+            dur_str = f"[{self.MUTEDBLUE}]{dur:.1f}s[/]" if dur else ""
+            items.append(f"  {icon}  [{self.TEXT}]{name}[/]  {dur_str}")
 
-        if lines:
-            self.console.print("\n".join(lines))
+        if items:
+            content = "\n".join(items)
+            self.console.print(
+                Panel(
+                    f"\n{content}\n",
+                    title=f"[bold {self.ACCENT}]⚡ Parallel Calls[/]",
+                    border_style=self.LIGHTBLUE,
+                    padding=(0, 1),
+                    box=box.ROUNDED,
+                )
+            )
+            self.console.print()
 
-    # ── Context Retrieval (compact, Hermes-style) ─────────────────────
+    # ── Context Retrieval (spacious, verbose) ─────────────────────────
 
     def context_hit(self, source: str, snippet: str, score: float):
-        """Show a context retrieval hit (skill or memory)."""
-        short = snippet[:60] + "..." if len(snippet) > 60 else snippet
+        """Show a context retrieval hit with expanded detail."""
+        short = snippet[:120] + "..." if len(snippet) > 120 else snippet
+        color = self.GREEN if score > 0.5 else (self.MIDBLUE if score > 0.2 else self.MUTEDBLUE)
         self.console.print(
-            f"  [{DIM}]▸ [{ACCENT}]{source}[/] "
-            f"(score={score:.2f})[/]  [{TEXT}]{short}[/]"
+            f"  [{self.MUTEDBLUE}]┃ [{self.ACCENT}]⊞ {source}[/]  "
+            f"[{color}]score={score:.2f}[/][/]"
         )
-        self.working_info(f"⊞ {source} (score={score:.2f})")
+        self.console.print(
+            f"  [{self.MUTEDBLUE}]┃   {short}[/]"
+        )
 
     # ── Skill Learning (subtle one-liner) ─────────────────────────────
 
     def learned_skill(self, name: str):
         """Notify that a skill was auto-learned."""
         self.console.print(
-            f"  [{DIM}]🧠 Learned skill: [bold {ACCENT}]{name}[/][/]"
+            f"  [{self.MUTEDBLUE}]🧠 Learned skill: [bold {self.ACCENT}]{name}[/][/]"
         )
         self.console.print()
 
@@ -451,14 +654,22 @@ class ElingTUI:
 
     def separator(self):
         """Print a thin rule between turns."""
-        self.console.print(Rule(style=DIM))
+        self.console.print(Rule(style=MUTEDBLUE))
 
     # ── Memory recall header ──────────────────────────────────────────
 
     def recall_header(self):
-        """Print compact header for memory recall."""
-        self.console.print(f"[dim {DIM}]  ⊞ Recalled context — most relevant[/]")
-        self.working_info("Retrieving context...")
+        """Print spacious header for memory recall."""
+        self.console.print(
+            Panel(
+                f"[bold {self.ACCENT}]⊞ Context Retrieval[/]  "
+                f"[{self.MUTEDBLUE}]Searching skills + memories...[/]",
+                border_style=self.LIGHTBLUE,
+                padding=(0, 1),
+                box=box.SQUARE,
+            )
+        )
+        self.console.print()
 
     # ── Start / end turn ──────────────────────────────────────────────
 
@@ -501,17 +712,21 @@ class ElingTUI:
                 )
                 kb = KeyBindings()
 
+                @kb.add("c-c")
+                def _interrupt(event):
+                    raise KeyboardInterrupt()
+
                 @kb.add("c-l")
                 def _clear_screen(event):
                     event.app.current_buffer.reset()
                     os.system("clear" if os.name == "posix" else "cls")
 
                 style = Style.from_dict({
-                    "prompt": f"#{ACCENT[1:]} bold",
-                    "toolbar": f"#{BRONZE[1:]}",
-                    "toolbar.key": f"#{ACCENT[1:]} bold",
+                    "prompt": f"#{self.ACCENT[1:]} bold",
+                    "toolbar": f"#{self.LIGHTBLUE[1:]}",
+                    "toolbar.key": f"#{self.ACCENT[1:]} bold",
                     "toolbar.sep": "#525252",
-                    "toolbar.info": f"#{DIM[1:]}",
+                    "toolbar.info": f"#{self.MUTEDBLUE[1:]}",
                 })
 
                 self._pt_session = PromptSession(

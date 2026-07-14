@@ -45,7 +45,9 @@ def load_config(path: str = "config.json") -> dict:
         if os.path.exists(home_cfg):
             path = home_cfg
     with open(path) as f:
-        return json.load(f)
+        cfg = json.load(f)
+        cfg["_config_path"] = path
+        return cfg
 
 
 def build_system_prompt(
@@ -106,7 +108,7 @@ def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
 
     if tui:
         tui.console.print(
-            f"  [dim {tui.DIM}]⏳ ruff check {' '.join(sorted(files))}[/]"
+            f"  [dim {tui.MUTEDBLUE}]⏳ ruff check {' '.join(sorted(files))}[/]"
         )
 
     try:
@@ -116,15 +118,15 @@ def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
         )
         if result.returncode == 0:
             if tui:
-                tui.console.print(f"  [bold green]✓ ruff[/]  [dim {tui.DIM}]clean[/]")
+                tui.console.print(f"  [bold {tui.GREEN}]✓ ruff[/]  [dim {tui.MUTEDBLUE}]clean[/]")
         else:
             # Show first few lines of output
             lines = result.stdout.strip().splitlines()
             snippet = "\n".join(lines[:5])
             if len(lines) > 5:
-                snippet += f"\n  [dim {tui.DIM}]... and {len(lines)-5} more[/]"
+                snippet += f"\n  [dim {tui.MUTEDBLUE}]... and {len(lines)-5} more[/]"
             if tui:
-                tui.console.print("  [bold red]✗ ruff[/]")
+                tui.console.print(f"  [bold {tui.RED}]✗ ruff[/]")
                 tui.console.print(snippet)
             else:
                 print(f"ruff: {len(lines)} issue(s)")
@@ -132,7 +134,7 @@ def _auto_ruff_check(tool_results: list[dict], tui=None) -> None:
         pass  # ruff not installed
     except subprocess.TimeoutExpired:
         if tui:
-            tui.console.print(f"  [dim {tui.DIM}]⚠ ruff timed out[/]")
+            tui.console.print(f"  [dim {tui.MUTEDBLUE}]⚠ ruff timed out[/]")
 
 
 def run_tool_calls(
@@ -187,9 +189,11 @@ def run_tool_calls(
         if tui:
             args_preview = ""
             if isinstance(arguments, dict):
-                vals = [str(v)[:30] for v in arguments.values()]
-                args_preview = ", ".join(vals)
-            tui.tool_call(func_name, args_preview, dur, ok)
+                items = []
+                for k, v in arguments.items():
+                    items.append(f"{k}={str(v)[:40]}")
+                args_preview = ", ".join(items)
+            tui.tool_call(func_name, args_preview, dur, ok, _result=result)
 
         return {
             "role": "tool",
@@ -419,6 +423,12 @@ def main():
     args = parser.parse_args()
 
     config = load_config()
+    # Resolve relative DB paths based on config file location
+    _cfg_dir = os.path.dirname(os.path.abspath(config.get("_config_path", "config.json")))
+    for _key in ("memory_db", "skills_db"):
+        _val = config.get(_key)
+        if _val and not os.path.isabs(_val):
+            config[_key] = os.path.join(_cfg_dir, _val)
     zen_api_key = config.get("zen_api_key", os.environ.get("ZEN_API_KEY", ""))
     if not zen_api_key or zen_api_key == "REPLACE_WITH_YOUR_ZEN_KEY":
         print(
@@ -432,7 +442,16 @@ def main():
         model=config.get("zen_model", "zen/default"),
         base_url=config.get("zen_base_url", "https://opencode.ai/zen/v1"),
     )
-    memory_store = MemoryStore(config.get("memory_db", "agent_memory.db"))
+    # Clean up stale WAL/SHM files from previous uncheckpointed closes
+    _mem_path = config.get("memory_db", "agent_memory.db")
+    for _ext in ("-wal", "-shm"):
+        _orphan = _mem_path + _ext
+        if os.path.exists(_orphan):
+            try:
+                os.remove(_orphan)
+            except OSError:
+                pass
+    memory_store = MemoryStore(_mem_path)
     skills_lib = SkillLibrary(config.get("skills_db", "agent_skills.db"))
     plugin_callables, plugin_schemas = load_plugins()
 
@@ -444,7 +463,7 @@ def main():
     # ── Initialise TUI ──────────────────────────────────────────────
     if not args.compact:
         from tui import ElingTUI
-        tui = ElingTUI(session_start=_start_time)
+        tui = ElingTUI(session_start=_start_time, theme=config.get("theme"))
         tui.console.clear()
     else:
         print("\033[2J\033[H", end="")
@@ -452,7 +471,7 @@ def main():
 
     # Count skills/memories for banner
     skill_count = len(skills_lib.relevant("", k=9999))
-    mem_count = len(memory_store.all())
+    mem_count = memory_store.count()
 
     if tui:
         tui.banner(
@@ -461,9 +480,10 @@ def main():
             plugins=len(plugin_schemas),
             mcp=len(mcp_manager.connections) + _count_mcp_daemons(),
             model=config.get("zen_model", ""),
+            theme=config.get("theme", ""),
         )
         tui.console.print(
-            f"[dim {tui.DIM}]Type your query or 'exit' to quit.[/]"
+            f"[dim {tui.MUTEDBLUE}]Type your query or 'exit' to quit.[/]"
         )
         tui.console.print()
     else:
@@ -522,7 +542,7 @@ def main():
                         if os.path.exists(src) and not os.path.exists(dst):
                             shutil.copy2(src, dst)
                     if tui:
-                        tui.console.print(f"[bold yellow]\u267b Restarting in {new_dir}...[/]")
+                        tui.console.print(f"[bold {tui.MIDBLUE}]\u267b Restarting in {new_dir}...[/]")
                     mcp_manager.stop_all()
                     memory_store.close()
                     skills_lib.close()
@@ -538,8 +558,17 @@ def main():
                 else:
                     print(f"\n> {user_input}")
 
-                if tui:
-                    with tui.thinking():
+                try:
+                    if tui:
+                        with tui.thinking():
+                            response, conversation_history = run_turn(
+                                provider, user_input,
+                                memory_store, skills_lib,
+                                plugin_callables, plugin_schemas,
+                                mcp_manager, config, tui,
+                                conversation_history=conversation_history,
+                            )
+                    else:
                         response, conversation_history = run_turn(
                             provider, user_input,
                             memory_store, skills_lib,
@@ -547,14 +576,14 @@ def main():
                             mcp_manager, config, tui,
                             conversation_history=conversation_history,
                         )
-                else:
-                    response, conversation_history = run_turn(
-                        provider, user_input,
-                        memory_store, skills_lib,
-                        plugin_callables, plugin_schemas,
-                        mcp_manager, config, tui,
-                        conversation_history=conversation_history,
-                    )
+                except KeyboardInterrupt:
+                    print()
+                    if tui:
+                        tui.console.print(f"  [{tui.MIDBLUE}]⏹ Interrupted[/]")
+                    else:
+                        print("Interrupted.")
+                    response = ""
+                    continue
 
                 if tui:
                     tui.assistant(response)

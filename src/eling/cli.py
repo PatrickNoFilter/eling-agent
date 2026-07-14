@@ -273,6 +273,10 @@ def main():
         "--mode", default="",
         help="Agent mode (auto, coding, research, edit, debug, ops)",
     )
+    p_setup.add_argument(
+        "--theme", default="",
+        help=f"Color theme ({', '.join(_THEME_NAMES)})",
+    )
 
     # ── doctor subcommand ──
     sub.add_parser(
@@ -800,6 +804,9 @@ _AGENT_MODES = {
     "6": {"key": "ops", "desc": "Operations: fast, concise, tool-heavy"},
 }
 
+# Theme names available in tui.py — shown as-is to the user.
+_THEME_NAMES = ["blue", "pink", "green", "yellow", "red", "white", "ocean", "twilight", "pastel", "cobalt"]
+
 
 def _fetch_models(base_url: str, api_key: str) -> list[str] | None:
     """Fetch available models from an OpenAI-compatible ``/v1/models`` endpoint.
@@ -851,11 +858,10 @@ def _prompt_choice(
 
 
 def _run_setup(args: argparse.Namespace) -> None:
-    """Configure Eling interactively — provider, key, model, mode."""
+    """Configure Eling interactively — branches into sub-menus."""
     config_dir = os.path.join(os.path.expanduser("~"), "eling-agent")
     config_path = os.path.join(config_dir, "config.json")
 
-    # Load existing config
     if os.path.exists(config_path):
         with open(config_path) as f:
             cfg = json.load(f)
@@ -867,11 +873,35 @@ def _run_setup(args: argparse.Namespace) -> None:
     print("║           Eling Setup Wizard                ║")
     print("╚══════════════════════════════════════════════╝")
     print()
-    print("  This wizard will configure your provider,")
-    print("  API key, model, and agent mode.")
-    print()
 
-    # ── Step 1: Provider selection ─────────────────────────────────────
+    while True:
+        print("  What would you like to configure?")
+        print("    [1] Provider, API key, model, and agent mode")
+        print("    [2] Theme")
+        print("    [3] Done — exit setup")
+        print()
+        try:
+            menu = input("  Select [1-3]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Bye!")
+            return
+        if menu == "1":
+            _setup_provider(cfg, config_dir, config_path, args)
+            print("  ✓ Done!")
+        elif menu == "2":
+            _setup_theme(cfg, config_path)
+            print("  ✓ Done!")
+        elif menu == "3":
+            print("\n  Bye!")
+            print()
+            return
+        else:
+            print(f"  Invalid choice '{menu}'.")
+        print()
+
+
+def _setup_provider(cfg: dict, config_dir: str, config_path: str, args: argparse.Namespace) -> None:
+    """Configure provider, key, model, and agent mode."""
     existing_provider = ""
     if cfg.get("zen_base_url"):
         for p in _PROVIDERS.values():
@@ -892,20 +922,19 @@ def _run_setup(args: argparse.Namespace) -> None:
             try:
                 prov_key = input("  Select provider [1-7]: ").strip()
             except (EOFError, KeyboardInterrupt):
-                print("\n  Setup cancelled.")
+                print("\n  Cancelled.")
                 return
             if prov_key in _PROVIDERS:
                 break
             print(f"  Invalid choice '{prov_key}'. Pick 1-7.")
     elif prov_key not in _PROVIDERS:
-        print(f"  Unknown provider '{prov_key}'. Using OpenCode Zen.")
         prov_key = "1"
 
     provider = _PROVIDERS[prov_key]
     print(f"  ✓ Provider: {provider['name']}")
     print()
 
-    # ── Step 2: Base URL ───────────────────────────────────────────────
+    # Base URL
     base_url = provider["base_url"]
     if provider["key"] == "custom":
         existing_url = cfg.get("zen_base_url", "")
@@ -913,7 +942,7 @@ def _run_setup(args: argparse.Namespace) -> None:
         try:
             entered = input(prompt).strip()
         except (EOFError, KeyboardInterrupt):
-            print("\n  Setup cancelled.")
+            print("\n  Cancelled.")
             return
         base_url = entered if entered else (existing_url or "")
         if not base_url:
@@ -923,7 +952,7 @@ def _run_setup(args: argparse.Namespace) -> None:
         print(f"  Base URL: {base_url}")
     print()
 
-    # ── Step 3: API key ────────────────────────────────────────────────
+    # API key
     existing_key = cfg.get("zen_api_key", "")
     api_key = args.zen_key or ""
     if not api_key:
@@ -945,29 +974,26 @@ def _run_setup(args: argparse.Namespace) -> None:
                 try:
                     change = input("  Change key? (y/N): ").strip().lower()
                 except (EOFError, KeyboardInterrupt):
-                    print("\n  Setup cancelled.")
+                    print("\n  Cancelled.")
                     return
             if not existing_key or change == "y":
                 print("  Get a key at: https://opencode.ai/zen")
                 try:
                     api_key = input("  Paste your API key: ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    print("\n  Setup cancelled.")
+                    print("\n  Cancelled.")
                     return
                 if not api_key:
-                    print("  No key provided. Keeping existing.")
                     api_key = existing_key
             else:
                 api_key = existing_key
     print()
 
-    # ── Step 4: Model selection ────────────────────────────────────────
+    # Model
     model = args.model or ""
     if not model:
         existing_model = cfg.get("zen_model", "")
-        models = list(provider["models"])  # hardcoded fallback
-
-        # Try fetching live models from the API
+        models = list(provider["models"])
         if provider.get("api_fetch") and api_key and base_url:
             print("  Step 4 — Model (fetching from API...)")
             fetched = _fetch_models(base_url, api_key)
@@ -977,7 +1003,6 @@ def _run_setup(args: argparse.Namespace) -> None:
                 print("  (API unavailable — using curated list)")
         else:
             print("  Step 4 — Model")
-
         if models:
             model_map = {}
             for i, m in enumerate(models, 1):
@@ -990,7 +1015,7 @@ def _run_setup(args: argparse.Namespace) -> None:
                 try:
                     choice = input("  Select model: ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    print("\n  Setup cancelled.")
+                    print("\n  Cancelled.")
                     return
                 if choice in model_map:
                     model = model_map[choice]
@@ -999,7 +1024,7 @@ def _run_setup(args: argparse.Namespace) -> None:
                     try:
                         model = input("  Enter model name: ").strip()
                     except (EOFError, KeyboardInterrupt):
-                        print("\n  Setup cancelled.")
+                        print("\n  Cancelled.")
                         return
                     if model:
                         break
@@ -1013,13 +1038,13 @@ def _run_setup(args: argparse.Namespace) -> None:
             try:
                 model = input(prompt).strip()
             except (EOFError, KeyboardInterrupt):
-                print("\n  Setup cancelled.")
+                print("\n  Cancelled.")
                 return
             model = model or existing_model
     print(f"  ✓ Model: {model}")
     print()
 
-    # ── Step 5: Agent mode ─────────────────────────────────────────────
+    # Agent mode
     mode = args.mode or ""
     if not mode:
         existing_mode = cfg.get("agent_mode", "auto")
@@ -1029,7 +1054,7 @@ def _run_setup(args: argparse.Namespace) -> None:
             try:
                 change = input("  Change mode? (y/N): ").strip().lower()
             except (EOFError, KeyboardInterrupt):
-                print("\n  Setup cancelled.")
+                print("\n  Cancelled.")
                 return
         if not existing_mode or change == "y":
             print("  Step 5 — Agent Mode")
@@ -1041,7 +1066,7 @@ def _run_setup(args: argparse.Namespace) -> None:
                 try:
                     choice = input("  Select mode: ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    print("\n  Setup cancelled.")
+                    print("\n  Cancelled.")
                     return
                 if choice in _AGENT_MODES:
                     mode = _AGENT_MODES[choice]["key"]
@@ -1052,7 +1077,7 @@ def _run_setup(args: argparse.Namespace) -> None:
     print(f"  ✓ Mode: {mode}")
     print()
 
-    # ── Write config ───────────────────────────────────────────────────
+    # Write
     cfg["zen_api_key"] = api_key
     cfg["zen_model"] = model
     cfg["zen_base_url"] = base_url
@@ -1072,7 +1097,31 @@ def _run_setup(args: argparse.Namespace) -> None:
     print(f"    Mode:      {mode}")
     print("  ─────────────────────────────────────")
     print()
-    print("  To verify: run  eling 'your query here'")
+
+
+def _setup_theme(cfg: dict, config_path: str) -> None:
+    """Configure color theme."""
+    theme = cfg.get("theme", "cobalt")
+    print("  Theme selection")
+    for i, name in enumerate(_THEME_NAMES, 1):
+        marker = " ← current" if name == theme else ""
+        print(f"    [{i}] {name}{marker}")
+    print()
+    while True:
+        try:
+            choice = input("  Select theme [1-5]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled.")
+            return
+        if choice.isdigit() and 1 <= int(choice) <= len(_THEME_NAMES):
+            theme = _THEME_NAMES[int(choice) - 1]
+            break
+        print(f"  Invalid choice '{choice}'.")
+    cfg["theme"] = theme
+    with open(config_path, "w") as f:
+        json.dump(cfg, f, indent=4)
+    print(f"  ✓ Theme: {theme}")
+    print("  ─────────────────────────────────────")
     print()
 
 

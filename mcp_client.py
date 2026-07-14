@@ -16,9 +16,10 @@ log = logging.getLogger("mcp_client")
 class MCPServerConnection:
     """Manages a single MCP server subprocess with JSON-RPC 2.0 over stdio."""
 
-    def __init__(self, name: str, command: list[str]):
+    def __init__(self, name: str, command: list[str], env: dict = None):
         self.name = name
         self.command = command
+        self.env = env or None
         self._proc: subprocess.Popen | None = None
         self._recv_thread: threading.Thread | None = None
         self._responses: dict[int, Any] = {}
@@ -43,6 +44,7 @@ class MCPServerConnection:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=self.env,
         )
         # Start a reader thread that collects stdout lines
         self._read_thread = threading.Thread(target=self._reader, daemon=True)
@@ -191,7 +193,8 @@ class MCPManager:
                 continue
             command = [cfg.get("command", "")]
             command.extend(cfg.get("args", []))
-            conn = MCPServerConnection(name, command)
+            env = cfg.get("env")
+            conn = MCPServerConnection(name, command, env=env)
             try:
                 conn.start()
                 self.connections[name] = conn
