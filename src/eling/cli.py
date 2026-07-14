@@ -805,7 +805,7 @@ _AGENT_MODES = {
 }
 
 # Theme names available in tui.py — shown as-is to the user.
-_THEME_NAMES = ["blue", "pink", "green", "yellow", "red", "white", "ocean", "twilight", "pastel", "cobalt"]
+_THEME_NAMES = ["brown", "blue", "pink", "green", "yellow", "red", "white", "ocean", "twilight", "pastel", "cobalt"]
 
 
 def _fetch_models(base_url: str, api_key: str) -> list[str] | None:
@@ -1101,18 +1101,24 @@ def _setup_provider(cfg: dict, config_dir: str, config_path: str, args: argparse
 
 def _setup_theme(cfg: dict, config_path: str) -> None:
     """Configure color theme."""
-    theme = cfg.get("theme", "cobalt")
+    theme = cfg.get("theme", "brown")
+    is_auto = theme == "auto"
     print("  Theme selection")
+    marker = " ← current" if is_auto else ""
+    print(f"    [a] Auto-rotate (cycle themes each session){marker}")
     for i, name in enumerate(_THEME_NAMES, 1):
-        marker = " ← current" if name == theme else ""
+        marker = " ← current" if not is_auto and name == theme else ""
         print(f"    [{i}] {name}{marker}")
     print()
     while True:
         try:
-            choice = input("  Select theme [1-5]: ").strip()
+            choice = input(f"  Select theme [a/1-{len(_THEME_NAMES)}]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\n  Cancelled.")
             return
+        if choice == "a":
+            theme = "auto"
+            break
         if choice.isdigit() and 1 <= int(choice) <= len(_THEME_NAMES):
             theme = _THEME_NAMES[int(choice) - 1]
             break
@@ -1120,7 +1126,8 @@ def _setup_theme(cfg: dict, config_path: str) -> None:
     cfg["theme"] = theme
     with open(config_path, "w") as f:
         json.dump(cfg, f, indent=4)
-    print(f"  ✓ Theme: {theme}")
+    label = f"Auto-rotate ({', '.join(_THEME_NAMES)})" if theme == "auto" else theme
+    print(f"  ✓ Theme: {label}")
     print("  ─────────────────────────────────────")
     print()
 

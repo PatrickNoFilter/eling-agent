@@ -22,7 +22,7 @@ from plugins import load_plugins
 
 from rich.logging import RichHandler
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(message)s",
     handlers=[RichHandler(rich_tracebacks=True, show_path=False, show_time=False)],
 )
@@ -162,8 +162,17 @@ def run_tool_calls(
             arguments = arguments_raw
 
         tool_call_id = tc.get("id", "")
-        t0 = time.time()
 
+        if tui:
+            args_preview = ""
+            if isinstance(arguments, dict):
+                items = []
+                for k, v in arguments.items():
+                    items.append(f"{k}={str(v)[:40]}")
+                args_preview = ", ".join(items)
+            tui.tool_start(func_name, args_preview)
+
+        t0 = time.time()
         if func_name in plugin_callables:
             try:
                 result = plugin_callables[func_name](**arguments)
@@ -187,13 +196,7 @@ def run_tool_calls(
 
         dur = time.time() - t0
         if tui:
-            args_preview = ""
-            if isinstance(arguments, dict):
-                items = []
-                for k, v in arguments.items():
-                    items.append(f"{k}={str(v)[:40]}")
-                args_preview = ", ".join(items)
-            tui.tool_call(func_name, args_preview, dur, ok, _result=result)
+            tui.tool_end(func_name, dur, ok, result=result)
 
         return {
             "role": "tool",
@@ -499,7 +502,7 @@ def main():
             plugins=len(plugin_schemas),
             mcp=len(mcp_manager.connections) + _count_mcp_daemons(),
             model=config.get("zen_model", ""),
-            theme=config.get("theme", ""),
+            theme=tui._theme_name,
         )
         tui.console.print(
             f"[dim {tui.MUTEDBLUE}]Type your query or 'exit' to quit.[/]"
@@ -573,7 +576,7 @@ def main():
                     break
 
                 if tui:
-                    tui.turn_start(user_input)
+                    tui.turn_start(user_input, show_input=False)
                 else:
                     print(f"\n> {user_input}")
 

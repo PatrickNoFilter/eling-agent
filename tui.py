@@ -173,6 +173,16 @@ THEMES: dict[str, dict[str, str]] = {
         "GREEN": "#a3c9b7",
         "RED": "#e2a6a6",
     },
+    "brown": {
+        "ACCENT": "#d4a574",
+        "MIDBLUE": "#c28a5c",
+        "LIGHTBLUE": "#e8c9a0",
+        "MUTEDBLUE": "#f0dcc0",
+        "DEEPBLUE": "#4a3220",
+        "TEXT": "#fdf6ed",
+        "GREEN": "#7dcea0",
+        "RED": "#e67e5a",
+    },
     "cobalt": {
         "ACCENT": "#93c5fd",
         "MIDBLUE": "#60a5fa",
@@ -187,9 +197,18 @@ THEMES: dict[str, dict[str, str]] = {
 
 DEFAULT_THEME = "cobalt"
 
+_THEME_NAMES = list(THEMES.keys())
+
+def _resolve_theme_name(name: str | None) -> str:
+    """Resolve a theme name; 'auto' rotates per session (each /new picks a new theme)."""
+    if name == "auto":
+        import time
+        return _THEME_NAMES[int(time.time()) % len(_THEME_NAMES)]
+    return name if name in THEMES else DEFAULT_THEME
+
 # Resolve a theme by name, falling back to default on unknown names.
 def _resolve_theme(name: str | None) -> dict[str, str]:
-    return THEMES.get(name or DEFAULT_THEME, THEMES[DEFAULT_THEME])
+    return THEMES[_resolve_theme_name(name)]
 
 # Module-level convenience references (used by code that imports tui.ACCENT etc.)
 _ACTIVE_THEME = _resolve_theme(DEFAULT_THEME)
@@ -233,6 +252,7 @@ class ElingTUI:
         self._interactive = False
 
         # Resolve theme
+        self._theme_name = _resolve_theme_name(theme)
         pal = _resolve_theme(theme)
         self.MUTEDBLUE = pal["MUTEDBLUE"]
         self.ACCENT = pal["ACCENT"]
@@ -673,7 +693,7 @@ class ElingTUI:
 
     # ── Start / end turn ──────────────────────────────────────────────
 
-    def turn_start(self, query: str):
+    def turn_start(self, query: str, **kwargs):
         """Begin a new turn — print user input + separator."""
         self.separator()
         self.user_input(query)

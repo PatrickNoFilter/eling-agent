@@ -182,30 +182,83 @@ class MCPServerConnection:
 
 
 class MCPManager:
-    """Manages multiple MCP server connections."""
+    """Manages multiple MCP server connections with lazy parallel init.
+
+    Servers are *not* started at construction — they connect on first
+    use (``openai_tools()`` or ``call()``).  This keeps agent startup
+    instant regardless of how many MCP servers are configured.
+    """
+
+    # Well-known env vars whose empty value signals a misconfigured server
+    _REQUIRED_ENV_KEYS = {
+        "firecrawl": "FIRECRAWL_API_KEY",
+        "github": "GITHUB_TOKEN",
+        "e2b": "E2B_API_KEY",
+        "ref_tools": "REF_API_KEY",
+        "postgres": "DATABASE_URL",
+    }
 
     def __init__(self, servers_config: dict[str, dict]):
+        self._configs: dict[str, dict] = {}
         self.connections: dict[str, MCPServerConnection] = {}
+        self._connected = False
+
         for name, cfg in servers_config.items():
-            # Skip config entries starting with "_" (disabled/example)
             if name.startswith("_"):
                 log.info("Skipping disabled MCP server: %s", name)
                 continue
-            command = [cfg.get("command", "")]
-            command.extend(cfg.get("args", []))
-            env = cfg.get("env")
-            conn = MCPServerConnection(name, command, env=env)
-            try:
-                conn.start()
-                self.connections[name] = conn
-                log.info("MCP server '%s' started successfully", name)
-            except Exception as exc:
-                log.error("Failed to start MCP server '%s': %s", name, exc)
-                # One failing server doesn't crash startup
+            env = cfg.get("env", {})
+            # Skip servers whose required API key is empty
+            required_key = self._REQUIRED_ENV_KEYS.get(name)
+            if required_key and not env.get(required_key):
+                log.info("Skipping MCP server '%s' — %s not set", name, required_key)
+                continue
+            self._configs[name] = cfg
+
+    def _start_one(self, name: str, cfg: dict) -> MCPServerConnection | None:
+        """Start a single MCP server and return its connection (or None)."""
+        command = [cfg.get("command", "")]
+        command.extend(cfg.get("args", []))
+        conn = MCPServerConnection(name, command, env=cfg.get("env"))
+        try:
+            conn.start()
+            return conn
+        except Exception as exc:
+            log.error("Failed to start MCP server '%s': %s", name, exc)
+            return None
+
+    def _ensure_connected(self):
+        """Connect all configured servers in parallel (idempotent)."""
+        if self._connected:
+            return
+        self._connected = True
+
+        import concurrent.futures
+
+        missing = [n for n in self._configs if n not in self.connections]
+        if not missing:
+            return
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(len(missing), 8)
+        ) as pool:
+            fut = {
+                n: pool.submit(self._start_one, n, self._configs[n])
+                for n in missing
+            }
+            for name, f in fut.items():
+                conn = f.result()
+                if conn is not None:
+                    self.connections[name] = conn
+                    log.info("MCP server '%s' started successfully", name)
 
     def openai_tools(self) -> list[dict]:
-        """Return all server tools formatted as OpenAI tool schemas, "
-        "namespaced as mcp__<server>__<tool_name>."""
+        """Return all server tools formatted as OpenAI tool schemas,
+        "namespaced as mcp__<server>__<tool_name>.
+
+        Triggers lazy connection of all servers on first call.
+        """
+        self._ensure_connected()
         tools = []
         for name, conn in self.connections.items():
             for tool in conn.tools:
@@ -224,8 +277,10 @@ class MCPManager:
     def call(self, name: str, args: dict) -> dict:
         """
         Route a tool call to the right connection by parsing
-        the mcp__<server>__<tool> namespace.
+        the mcp__<server>__<tool> namespace.  Triggers lazy
+        connection on first use.
         """
+        self._ensure_connected()
         parts = name.split("__", 2)
         if len(parts) < 3 or not parts[0] == "mcp":
             return {"error": f"Invalid MCP tool name: {name}"}
