@@ -25,6 +25,11 @@ def main():
         _run_tui(rest_argv)
         return
 
+    # `eling /new` — launch TUI same as bare `eling`
+    if len(sys.argv) >= 2 and sys.argv[1] == "/new":
+        _run_tui(sys.argv[2:])
+        return
+
     parser = argparse.ArgumentParser(
         prog="eling", description="Eling — unified second brain"
     )

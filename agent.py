@@ -705,7 +705,7 @@ def main():
                     os.makedirs(new_dir, exist_ok=True)
                     for fname in ("config.json", config.get("memory_db", "agent_memory.db"), config.get("skills_db", "agent_skills.db")):
                         src = os.path.abspath(fname)
-                        dst = os.path.join(new_dir, fname)
+                        dst = os.path.join(new_dir, os.path.basename(fname))
                         if os.path.exists(src) and not os.path.exists(dst):
                             shutil.copy2(src, dst)
                     if tui:
