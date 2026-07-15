@@ -179,10 +179,12 @@ class TestCLIErrors:
         assert result.returncode != 0
 
     def test_no_subcommand(self):
+        env = {**os.environ, "ZEN_API_KEY": "test-key-for-ci"}
         result = subprocess.run(
             [sys.executable, "-m", "eling.cli"],
             capture_output=True,
             text=True,
             timeout=15,
+            env=env,
         )
         assert result.returncode == 0  # CLI drops into REPL with no args

@@ -573,7 +573,7 @@ def main():
         _val = config.get(_key)
         if _val and not os.path.isabs(_val):
             config[_key] = os.path.join(_cfg_dir, _val)
-    zen_api_key = config.get("zen_api_key", os.environ.get("ZEN_API_KEY", ""))
+    zen_api_key = os.environ.get("ZEN_API_KEY") or config.get("zen_api_key", "")
     if not zen_api_key or zen_api_key == "REPLACE_WITH_YOUR_ZEN_KEY":
         print(
             "ERROR: Set zen_api_key in config.json or ZEN_API_KEY env var.\n"
