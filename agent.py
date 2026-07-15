@@ -45,6 +45,18 @@ def load_config(path: str = "config.json") -> dict:
         home_cfg = os.path.join(os.path.expanduser("~"), "eling-agent", "config.json")
         if os.path.exists(home_cfg):
             path = home_cfg
+    if not os.path.exists(path):
+        # Bootstrap from example if available
+        example = path.replace("config.json", "config.example.json")
+        if os.path.exists(example):
+            shutil.copy2(example, path)
+            print(f"Created {path} from {example} — edit to add your API key.")
+        else:
+            print(
+                "ERROR: No config.json found. Copy config.example.json to "
+                "config.json and set your zen_api_key (or set ZEN_API_KEY env var)."
+            )
+            sys.exit(1)
     with open(path) as f:
         cfg = json.load(f)
         cfg["_config_path"] = path

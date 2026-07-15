@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eling-agent"
-version = "0.2.5"
+version = "0.2.6"
 description = "Personal auto-learning agent CLI with memory, skills, MCP tools, workspace manager, rich TUI with themes, auto-pytest, verbose tool output, auto-fix lint, @tool plugin decorator, and wall-clock timeouts"
 readme = "README.md"
 license = {text = "MIT"}
@@ -46,7 +46,7 @@ dev = [
 ]
 
 [project.scripts]
-eling-agent = "agent:main"
+eling-agent = "eling_agent.cli:main"
 eling-install-opencode = "eling.cli:_run_install_opencode_cli"
 eling-install-zero = "eling.cli:_run_install_zero_cli"
 eling-install-termux = "eling.cli:_run_install_termux_cli"
