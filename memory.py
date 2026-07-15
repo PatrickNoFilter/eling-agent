@@ -32,10 +32,42 @@ class MemoryStore:
 
     def __init__(self, db_path: str):
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._db_path = db_path
+        self._conn = self._connect_or_recover(db_path)
         self._create_table()
+
+    def _connect_or_recover(self, db_path: str) -> sqlite3.Connection:
+        """Connect to the database, recovering from corruption if needed."""
+        # Clean stale WAL/SHM files first
+        for ext in ("-wal", "-shm"):
+            orphan = db_path + ext
+            if os.path.exists(orphan):
+                try:
+                    os.remove(orphan)
+                except OSError:
+                    pass
+        try:
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            return conn
+        except sqlite3.DatabaseError:
+            # Database corrupted — back it up and start fresh
+            import shutil
+            backup = db_path + ".corrupted"
+            try:
+                shutil.move(db_path, backup)
+                print(f"⚠ Corrupted database moved to {backup}, creating fresh one.")
+            except OSError:
+                # Can't move? Try deleting directly
+                try:
+                    os.remove(db_path)
+                except OSError:
+                    pass
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            return conn
 
     def _create_table(self):
         with self._lock:
