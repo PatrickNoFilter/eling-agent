@@ -926,10 +926,11 @@ def _run_setup(args: argparse.Namespace) -> None:
         print("  What would you like to configure?")
         print("    [1] Provider, API key, model, and agent mode")
         print("    [2] Theme")
-        print("    [3] Done — exit setup")
+        print("    [3] Show reasoning")
+        print("    [4] Done — exit setup")
         print()
         try:
-            menu = input("  Select [1-3]: ").strip()
+            menu = input("  Select [1-4]: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n  Bye!")
             return
@@ -940,6 +941,9 @@ def _run_setup(args: argparse.Namespace) -> None:
             _setup_theme(cfg, config_path)
             print("  ✓ Done!")
         elif menu == "3":
+            _setup_reasoning(cfg, config_path)
+            print("  ✓ Done!")
+        elif menu == "4":
             print("\n  Bye!")
             print()
             return
@@ -1210,6 +1214,32 @@ def _setup_theme(cfg: dict, config_path: str) -> None:
         json.dump(cfg, f, indent=4)
     label = f"Auto-rotate ({', '.join(_THEME_NAMES)})" if theme == "auto" else theme
     print(f"  ✓ Theme: {label}")
+    print("  ─────────────────────────────────────")
+    print()
+
+
+def _setup_reasoning(cfg: dict, config_path: str) -> None:
+    """Configure whether model reasoning is shown."""
+    current = cfg.get("show_reasoning", True)
+    label = "Yes" if current else "No"
+    print(f"  Current: show reasoning = {label}")
+    while True:
+        try:
+            choice = input("  Show model reasoning in output? (Y/n): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled.")
+            return
+        if choice in ("", "y", "yes"):
+            cfg["show_reasoning"] = True
+            break
+        if choice in ("n", "no"):
+            cfg["show_reasoning"] = False
+            break
+        print("  Enter Y or N.")
+    with open(config_path, "w") as f:
+        json.dump(cfg, f, indent=4)
+    result = "Yes" if cfg["show_reasoning"] else "No"
+    print(f"  ✓ Show reasoning: {result}")
     print("  ─────────────────────────────────────")
     print()
 
