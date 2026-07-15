@@ -1125,11 +1125,43 @@ def _setup_provider(cfg: dict, config_dir: str, config_path: str, args: argparse
     print(f"  ✓ Mode: {mode}")
     print()
 
+    # Show reasoning
+    existing_show = cfg.get("show_reasoning", True)
+    change = ""
+    if existing_show is not None:
+        label = "Yes" if existing_show else "No"
+        print(f"  Current show reasoning: {label}")
+        try:
+            change = input("  Change? (y/N): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled.")
+            return
+    show_reasoning = existing_show
+    if not existing_show or change == "y":
+        print("  Step 6 — Show Model Reasoning")
+        while True:
+            try:
+                choice = input("  Show reasoning in output? (Y/n): ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Cancelled.")
+                return
+            if choice in ("", "y", "yes"):
+                show_reasoning = True
+                break
+            if choice in ("n", "no"):
+                show_reasoning = False
+                break
+            print("  Enter Y or N.")
+    label = "Yes" if show_reasoning else "No"
+    print(f"  ✓ Show reasoning: {label}")
+    print()
+
     # Write
     cfg["zen_api_key"] = api_key
     cfg["zen_model"] = model
     cfg["zen_base_url"] = base_url
     cfg["agent_mode"] = mode
+    cfg["show_reasoning"] = show_reasoning
 
     os.makedirs(config_dir, exist_ok=True)
     with open(config_path, "w") as f:
@@ -1143,6 +1175,8 @@ def _setup_provider(cfg: dict, config_dir: str, config_path: str, args: argparse
     print(f"    Key:       {masked}")
     print(f"    Model:     {model}")
     print(f"    Mode:      {mode}")
+    reason_label = "Yes" if show_reasoning else "No"
+    print(f"    Reasoning: {reason_label}")
     print("  ─────────────────────────────────────")
     print()
 
