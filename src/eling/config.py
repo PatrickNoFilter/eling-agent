@@ -30,6 +30,7 @@ DEFAULTS: dict[str, Any] = {
     "adapter": "hermes",
     "verify_on_stop": True,
     "verify_on_stop_max_attempts": 2,
+    "show_reasoning": True,
 }
 
 ENV_MAP: dict[str, str] = {
@@ -45,6 +46,7 @@ ENV_MAP: dict[str, str] = {
     "adapter": "ELING_ADAPTER",
     "verify_on_stop": "ELING_VERIFY_ON_STOP",
     "verify_on_stop_max_attempts": "ELING_VERIFY_MAX_ATTEMPTS",
+    "show_reasoning": "ELING_SHOW_REASONING",
 }
 
 TYPE_MAP: dict[str, type] = {
@@ -59,6 +61,7 @@ TYPE_MAP: dict[str, type] = {
     "adapter": str,
     "verify_on_stop": bool,
     "verify_on_stop_max_attempts": int,
+    "show_reasoning": bool,
 }
 
 # ── Schema packs ──────────────────────────────────────────────────────────────
@@ -343,5 +346,11 @@ def describe_config() -> dict[str, dict]:
             "default": 2,
             "env": "ELING_VERIFY_MAX_ATTEMPTS",
             "description": "Max verification nudge retries per session",
+        },
+        "show_reasoning": {
+            "type": "bool",
+            "default": True,
+            "env": "ELING_SHOW_REASONING",
+            "description": "Show model reasoning/thinking output",
         },
     }

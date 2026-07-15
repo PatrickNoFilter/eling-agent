@@ -459,7 +459,7 @@ def run_turn(
 
         # Show model's chain-of-thought reasoning if present
         reasoning = resp.get("reasoning_content") or ""
-        if reasoning and tui:
+        if reasoning and tui and config.get("show_reasoning", True):
             tui.reasoning(reasoning)
 
         # If content is empty but we have reasoning (e.g. max_tokens still too low),
