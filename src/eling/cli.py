@@ -527,8 +527,51 @@ def _run_sync(args: argparse.Namespace) -> None:
         brain.close()
 
 
+def _ensure_configured_before_tui() -> None:
+    """Run interactive setup if no valid API key is configured yet."""
+    # Fast path: env var is set and valid
+    env_key = os.environ.get("ZEN_API_KEY", "")
+    if env_key and env_key != "REPLACE_WITH_YOUR_ZEN_KEY":
+        return
+
+    # Check config files in load_config priority order
+    candidates = [
+        os.path.join(os.getcwd(), "config.json"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "config.json"),
+        os.path.join(os.path.expanduser("~"), "eling-agent", "config.json"),
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    cfg = json.load(f)
+                if cfg.get("zen_api_key", "") not in ("", "REPLACE_WITH_YOUR_ZEN_KEY"):
+                    return
+            except (json.JSONDecodeError, OSError):
+                continue
+
+    # No valid key found — run the setup wizard
+    print()
+    print("  \u0001f511  No API key configured. Let's set one up.")
+    print()
+    _run_setup(argparse.Namespace(provider="", zen_key="", model="", mode="", theme=""))
+
+    # After setup (writes to ~/eling-agent/config.json), remove any stale
+    # placeholder config from CWD so agent.py doesn't pick it up first.
+    cwd_cfg = candidates[0]
+    if os.path.exists(cwd_cfg):
+        try:
+            with open(cwd_cfg) as f:
+                if json.load(f).get("zen_api_key") == "REPLACE_WITH_YOUR_ZEN_KEY":
+                    os.remove(cwd_cfg)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+
 def _run_tui(argv: list[str]) -> None:
     """Launch the TUI/REPL agent (agent.py), found in eling-agent directory."""
+    _ensure_configured_before_tui()
+
     # Add project root to path so agent.py can import sibling modules
     agent_path = os.path.join(os.path.dirname(__file__), "..", "..", "agent.py")
     agent_path = os.path.abspath(agent_path)
